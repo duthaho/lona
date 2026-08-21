@@ -64,3 +64,41 @@ n="$(grep -c 'model=alpha/one:free' "$STUB_DIR/requests.log" || true)"
 assert_eq 1 "$n" "(primary still probed when listing down)"
 
 echo "   listing probe + exit codes ok"
+
+# ---- T6: completion status mappings on the primary ----
+listing_all
+t6_case() { # stub-status expected-status expected-rc
+  echo "{\"alpha/one:free\": $1}" > "$STUB_DIR/completions.json"
+  clear_log
+  rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+  assert_eq "$3" "$rc" "(completion $1 exit)"
+  line="$(printf '%s\n' "$out" | grep 'alpha/one:free (completion)')"
+  assert_contains "$line" "$2" "(completion $1 status)"
+}
+t6_case 429 LIMITED 2
+t6_case 404 DEAD 2
+t6_case 400 DEAD 2
+t6_case 500 ERROR 2
+t6_case '"timeout"' ERROR 2
+rm "$STUB_DIR/completions.json"
+
+# default mode → exactly 1 completion call
+clear_log
+scripts/doctor.sh hermes >/dev/null 2>&1
+n="$(grep -c 'chat/completions' "$STUB_DIR/requests.log" || true)"
+assert_eq 1 "$n" "(default mode: one completion)"
+
+# --deep → one completion per chain member
+clear_log
+scripts/doctor.sh hermes --deep >/dev/null 2>&1
+n="$(grep -c 'chat/completions' "$STUB_DIR/requests.log" || true)"
+assert_eq 3 "$n" "(--deep: completions for all)"
+
+# --quick → zero completions; still healthy via listing
+clear_log
+rc=0; scripts/doctor.sh hermes --quick >/dev/null 2>&1 || rc=$?
+assert_eq 0 "$rc" "(--quick healthy exit)"
+n="$(grep -c 'chat/completions' "$STUB_DIR/requests.log" || true)"
+assert_eq 0 "$n" "(--quick: no completions)"
+
+echo "   completion probe + modes ok"

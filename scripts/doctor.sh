@@ -153,8 +153,10 @@ probe_completion_openrouter() { # model-id -> OK|LIMITED|DEAD|ERROR
     -d "{\"model\":\"$1\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
     || echo 000)"
   case "$code" in
-    200) echo OK ;;
-    *)   echo ERROR ;;
+    200)     echo OK ;;
+    429)     echo LIMITED ;;
+    400|404) echo DEAD ;;
+    *)       echo ERROR ;;   # 5xx, auth failures, curl timeout (000)
   esac
 }
 
@@ -177,9 +179,11 @@ run_probe() {
         else
           status=ERROR tier=listing
         fi
-        # Completion tier for the primary (unless the listing already
-        # declared it dead).
-        if [ "$idx" = 0 ] && [ "$status" != DEAD ]; then
+        # Completion tier: primary by default, every listed-OK model with
+        # --deep, nobody with --quick [D2, D5]. A listing-DEAD id never
+        # costs a completion request.
+        if [ "$status" != DEAD ] && [ "$MODE" != quick ] \
+          && { [ "$idx" = 0 ] || [ "$MODE" = deep ]; }; then
           status="$(probe_completion_openrouter "$id")" tier=completion
         fi
         ;;
