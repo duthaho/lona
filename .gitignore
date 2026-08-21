@@ -1,0 +1,9 @@
+# Secrets
+.env
+
+# Runtime state (config, credentials, sessions, memories)
+data/
+
+# Backups
+backups/
+*.tar.gz
