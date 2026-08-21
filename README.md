@@ -85,7 +85,15 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 
 ### Free tier (default)
 
-Both platforms ship configured for [`openrouter/free`](https://openrouter.ai/openrouter/free) — OpenRouter's server-side router that picks among ~22 free models and filters for tool-calling support. OpenClaw adds a client-side fallback chain of pinned `:free` models for rate-limit resilience.
+Both platforms ship with a **curated chain of free models**, ordered for reliability first:
+
+1. `nvidia/nemotron-3-ultra-550b-a55b:free` — strong agentic reasoner, 1M context, hosted by NVIDIA itself so it's rarely rate-limited
+2. `z-ai/glm-5.2:free` — the smartest free model by [Artificial Analysis](https://artificialanalysis.ai) index, but its single provider is frequently congested (429s), so it serves as fallback / manual switch
+3. `nvidia/nemotron-3-super-120b-a12b:free` / `google/gemma-4-31b-it:free` — additional fallbacks (Gemma adds vision)
+
+We deliberately avoid OpenRouter's `openrouter/free` auto-router: it picks free models *at random*, including tiny low-quality ones.
+
+**Gemini for free:** OpenRouter's free pool no longer carries Gemini/DeepSeek/Grok, but Google's own [AI Studio](https://aistudio.google.com) key has a generous free tier. Set `GOOGLE_API_KEY` in `.env` and switch the model to `gemini-3.6-flash` (both platforms support it natively — see the config templates; older Gemini 2.5 models are closed to new API users).
 
 > **Quota note:** OpenRouter's free-tier daily cap is per *account*, not per model. A one-time $10 credit purchase raises it to 1,000 requests/day — the best value upgrade for a personal assistant. Free model ids rotate; browse [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0).
 

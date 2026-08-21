@@ -4,16 +4,23 @@
 
 model:
   provider: openrouter
-  # Free-models router. Using a subscription instead? See docs/subscriptions.md.
-  default: openrouter/free
+  # Model choice rationale: see README "Free tier".
+  # Gemini alternative: provider: gemini + default: gemini-3.6-flash
+  # (requires GOOGLE_API_KEY). Subscriptions: docs/subscriptions.md.
+  default: nvidia/nemotron-3-ultra-550b-a55b:free
+
+# Automatic failover on rate limits (429), overload, or provider errors.
+fallback_model:
+  provider: openrouter
+  model: nvidia/nemotron-3-super-120b-a12b:free
 
 terminal:
   backend: local
 
-# Keep background tasks (compression, summaries) on free models as well —
-# otherwise Hermes falls back to a paid model for them.
+# Keep background tasks (compression, summaries) on free models.
 auxiliary:
   free_only: true
+  openrouter_model: nvidia/nemotron-3-nano-30b-a3b:free
 
 platforms:
   telegram:
