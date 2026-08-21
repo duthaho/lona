@@ -10,10 +10,12 @@ services:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     container_name: lona-openclaw
     restart: unless-stopped
+    # Secrets are read from .env via env_file, so the file always wins over
+    # variables exported in the calling shell.
+    env_file: .env
     environment:
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:?run ./deploy.sh to generate}
+      # Renamed variables and constants only.
+      GEMINI_API_KEY: ${GOOGLE_API_KEY:-}
       OPENCLAW_GATEWAY_PORT: "18789"
     volumes:
       # Config (openclaw.json), credentials, agent state, workspace
@@ -45,14 +47,11 @@ services:
     container_name: lona-hermes
     restart: unless-stopped
     command: gateway run
+    # Secrets are read from .env via env_file, so the file always wins over
+    # variables exported in the calling shell.
+    env_file: .env
     environment:
-      HERMES_UID: ${HERMES_UID:-1000}
-      HERMES_GID: ${HERMES_GID:-1000}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
-      TELEGRAM_GROUP_ALLOWED_CHATS: ${TELEGRAM_GROUP_ALLOWED_CHATS:-}
-      TELEGRAM_GROUP_ALLOWED_USERS: ${TELEGRAM_GROUP_ALLOWED_USERS:-}
+      # Renamed variables and constants only.
       # Default-deny for unknown users on every channel
       GATEWAY_ALLOW_ALL_USERS: "false"
       # Web dashboard (published on loopback below); auth is mandatory
