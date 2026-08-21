@@ -82,6 +82,21 @@ auxiliary:
 # platform_toolsets:
 #   telegram: [web, vision, file, skills, todo, cronjob, messaging]
 
+# OpenRouter provider routing: prefer the fastest host for each model.
+# Free models cost $0 either way, so throughput beats the default price sort.
+provider_routing:
+  sort: "throughput"
+
+# Voice memo transcription (Telegram voice → text). Local whisper is
+# auto-installed on first use (CPU; ~1 GB RAM while active). For faster
+# transcripts set GROQ_API_KEY in .env and switch provider to "groq".
+# stt:
+#   enabled: true
+#   provider: "local"
+#   local:
+#     model: "base"
+#     unload_after_idle_seconds: 300
+
 platforms:
   telegram:
     extra:

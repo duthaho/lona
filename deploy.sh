@@ -284,7 +284,11 @@ case "$ACTION" in
     mkdir -p backups
     f="backups/${PLATFORM}-$(date +%Y%m%d-%H%M%S).tar.gz"
     say "Backing up data/$PLATFORM → $f"
-    tar czf "$f" "data/$PLATFORM"
+    # Exit 1 = "file changed as we read it" — expected while the gateway is
+    # live (SQLite WAL churn); the archive is still usable. Exit ≥2 is fatal.
+    rc=0
+    tar czf "$f" --warning=no-file-changed "data/$PLATFORM" || rc=$?
+    [ "$rc" -le 1 ] || die "Backup failed (tar exit $rc)"
     say "Backup written: $f"
     ;;
   cli)
