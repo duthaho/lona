@@ -43,13 +43,30 @@ Then set `primary: "anthropic/claude-opus-5"` (keep free fallbacks).
 
 Alternative (heavier): install Claude Code *inside* the container and use `--method cli` — requires persisting the full container home; docs: [Claude CLI backend in Docker](https://docs.openclaw.ai/install/docker#claude-cli-backend-in-docker).
 
-> ⚠️ OpenClaw's docs note: subscription usage draws from your plan limits, and for always-on gateways an API key is "the most predictable choice". Anthropic can change `claude -p` billing behavior; OpenClaw treats Claude CLI reuse as sanctioned per Anthropic staff, but policies move.
+> ⚠️ OpenClaw's docs note: subscription usage draws from your plan limits, and for always-on gateways an API key is "the most predictable choice". Anthropic can change `claude -p` billing behavior. After a widely-reported 2026 enforcement wave against OpenClaw-style Claude subscription use, Anthropic reversed course and the Claude CLI route is **officially allowed again** — OpenClaw documents it as a supported auth path ([providers/anthropic](https://docs.openclaw.ai/providers/anthropic); Claude Code ≥ 2.1.206 required for the CLI-reuse route). Policies move — keep free fallbacks configured.
 
 Auth tokens persist in `data/openclaw/agents/…` + encryption key in `data/openclaw-secret/` (both git-ignored, both mounted by compose — don't delete them).
 
 ---
 
+### ⚠️ Google subscriptions: don't OAuth them through OpenClaw
+
+There are documented cases of Google **restricting Google AI Pro/Ultra accounts** that connected their subscription to OpenClaw via OAuth ([discussion](https://discuss.ai.google.dev/t/account-restricted-without-warning-google-ai-ultra-oauth-via-openclaw/122778)). Use a **Google AI Studio API key** (`GOOGLE_API_KEY` in `.env`) instead — it's free-tier, sanctioned, and what Lona's templates are wired for. Never route a Google *subscription* login through the gateway.
+
+---
+
 ## Hermes Agent
+
+### One subscription for everything: Nous Portal
+
+If you'd rather not collect separate keys for the model, web search, image generation, TTS, and a cloud browser, [Nous Portal](https://portal.nousresearch.com) covers all of them under one subscription (300+ models + tool gateway):
+
+```bash
+./deploy.sh hermes cli setup --portal    # OAuth login, sets provider, enables tool gateway
+./deploy.sh hermes cli portal info       # see what's wired up
+```
+
+You can still bring your own keys per-tool — the gateway is per-backend, not all-or-nothing.
 
 ### ChatGPT Plus/Pro (device-code — fully headless, zero tunnels)
 

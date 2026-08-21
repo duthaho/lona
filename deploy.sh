@@ -94,7 +94,7 @@ ensure_env() {
       read -r -p "Telegram bot token (from @BotFather, blank to skip): " v
       [ -n "$v" ] && set_env_var TELEGRAM_BOT_TOKEN "$v"
     fi
-    if [ "$PLATFORM" = hermes ] && [ -z "$(env_val TELEGRAM_ALLOWED_USERS)" ]; then
+    if [ -z "$(env_val TELEGRAM_ALLOWED_USERS)" ]; then
       read -r -p "Your Telegram user ID (ask @userinfobot, blank to skip): " v
       [ -n "$v" ] && set_env_var TELEGRAM_ALLOWED_USERS "$v"
     fi
@@ -154,7 +154,61 @@ sync_openclaw_groups() {
   done
 }
 
+# Inject Telegram user ids from TELEGRAM_ALLOWED_USERS (.env) into the
+# OpenClaw DM allowlist and make the first id the command owner. When at
+# least one id is set, DM policy switches from pairing to allowlist — the
+# upstream-recommended one-owner setup. Idempotent.
+sync_openclaw_users() {
+  local f=data/openclaw/openclaw.json ids id first=""
+  ids="$(env_val TELEGRAM_ALLOWED_USERS | tr -d ' ')"
+  [ -n "$ids" ] && [ -f "$f" ] || return 0
+  if ! grep -q '__LONA_ALLOWFROM__' "$f"; then
+    warn "No __LONA_ALLOWFROM__ marker in $f — manage the DM allowlist manually."
+    return 0
+  fi
+  local IFS=,
+  for id in $ids; do
+    [ -n "$first" ] || first="$id"
+    grep -q "\"telegram:$id\"" "$f" && continue
+    awk -v id="$id" '
+      !done && /__LONA_ALLOWFROM__/ {
+        match($0, /^[ \t]*/)
+        print substr($0, 1, RLENGTH) "\"telegram:" id "\","
+        done = 1
+      }
+      { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    say "Allowlisted Telegram user $id for DMs in openclaw.json"
+  done
+  if grep -q '__LONA_OWNER__' "$f" \
+    && ! grep -B1 '__LONA_OWNER__' "$f" | grep -q '"telegram:'; then
+    awk -v id="$first" '
+      !done && /__LONA_OWNER__/ {
+        match($0, /^[ \t]*/)
+        print substr($0, 1, RLENGTH) "\"telegram:" id "\","
+        done = 1
+      }
+      { print }
+    ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    say "Set Telegram user $first as command owner in openclaw.json"
+  fi
+  if grep -q 'dmPolicy: "pairing"' "$f"; then
+    sed -i.bak 's|dmPolicy: "pairing"|dmPolicy: "allowlist"|' "$f" && rm -f "$f.bak"
+    say "Switched OpenClaw DM policy to allowlist (ids from TELEGRAM_ALLOWED_USERS)"
+  fi
+}
+
 dc() { docker compose --profile "$PLATFORM" "$@"; }
+
+# Post-deploy hardening: OpenClaw's built-in audit tightens file permissions
+# and flips risky open policies to allowlists. Non-fatal — findings that need
+# a human are printed for review.
+audit_openclaw() {
+  [ "$PLATFORM" = openclaw ] || return 0
+  say "Running OpenClaw security audit"
+  dc run --rm --no-deps --entrypoint node openclaw dist/index.js security audit --fix \
+    || warn "Security audit reported findings — review the output above."
+}
 
 next_steps() {
   echo
@@ -166,8 +220,13 @@ next_steps() {
       echo "  • Dashboard: ssh -L 18789:127.0.0.1:18789 <user>@<vps>  →  http://127.0.0.1:18789"
       echo "               (token: OPENCLAW_GATEWAY_TOKEN in .env)"
       if [ -n "$(env_val TELEGRAM_BOT_TOKEN)" ]; then
-        echo "  • Telegram:  DM your bot, get a pairing code, then:"
-        echo "               ./deploy.sh openclaw cli pairing approve telegram <CODE>"
+        if [ -n "$(env_val TELEGRAM_ALLOWED_USERS)" ]; then
+          echo "  • Telegram:  DM your bot — ids in TELEGRAM_ALLOWED_USERS are allowlisted."
+        else
+          echo "  • Telegram:  DM your bot, get a pairing code, then:"
+          echo "               ./deploy.sh openclaw cli pairing approve telegram <CODE>"
+          echo "               (tip: set TELEGRAM_ALLOWED_USERS in .env for the sturdier allowlist)"
+        fi
         echo "  • Groups:    add bot to group → copy chat id from logs →"
         echo "               set TELEGRAM_GROUP_ALLOWED_CHATS in .env → ./deploy.sh openclaw up"
       fi
@@ -191,10 +250,14 @@ case "$ACTION" in
     require_docker
     ensure_env
     seed_config
-    [ "$PLATFORM" = openclaw ] && sync_openclaw_groups
+    if [ "$PLATFORM" = openclaw ]; then
+      sync_openclaw_users
+      sync_openclaw_groups
+    fi
     say "Pulling image + starting $PLATFORM"
     dc pull
     dc up -d
+    audit_openclaw
     next_steps
     ;;
   down)     dc down ;;
@@ -205,6 +268,7 @@ case "$ACTION" in
     say "Updating $PLATFORM to latest image"
     dc pull
     dc up -d
+    audit_openclaw
     ;;
   config)
     case "$PLATFORM" in

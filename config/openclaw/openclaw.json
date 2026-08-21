@@ -9,6 +9,15 @@
     reload: { mode: "hybrid" },
   },
 
+  session: {
+    // Each DM sender gets an isolated session (secure multi-user default).
+    // Solo use? "main" shares one rolling session across your devices instead.
+    dmScope: "per-channel-peer",
+    // Uncomment to cap per-message token cost of long-lived chats
+    // (docs.openclaw.ai/concepts/session):
+    // reset: { mode: "daily", atHour: 4, idleMinutes: 120 },
+  },
+
   agents: {
     defaults: {
       model: {
@@ -24,15 +33,51 @@
         // primary: "openai/gpt-5.3-codex-spark",   // ChatGPT Plus/Pro
         // primary: "anthropic/claude-opus-5",      // Claude Pro/Max
       },
+      // Downscale images sent to the model (default 1200). 800 cuts
+      // vision-token burn on the shared free-tier quota.
+      imageMaxDimensionPx: 800,
     },
+    entries: {
+      main: {
+        default: true,
+        // Make requireMention match your bot's @handle in groups.
+        // deploy.sh does not know it — edit after creating the bot.
+        // groupChat: { mentionPatterns: ["@my_bot"] },
+      },
+    },
+  },
+
+  // Free models are markedly easier to prompt-inject than frontier ones
+  // (see docs.openclaw.ai/gateway/security), so keep the blast radius small:
+  // no host filesystem outside the workspace, no elevated tools.
+  tools: {
+    fs: { workspaceOnly: true },
+    elevated: { enabled: false },
+    // Stricter tier for group-exposed bots — exec needs your approval:
+    // exec: { security: "allowlist", ask: "on-miss" },
+  },
+
+  // Owner of owner-only commands and exec approvals. Populated by deploy.sh
+  // from TELEGRAM_ALLOWED_USERS in .env (first id).
+  commands: {
+    ownerAllowFrom: [
+      // __LONA_OWNER__ (do not remove this marker)
+    ],
   },
 
   channels: {
     telegram: {
-      // Bot token comes from TELEGRAM_BOT_TOKEN. DMs use pairing: approve with
+      // Bot token comes from TELEGRAM_BOT_TOKEN.
+      // With TELEGRAM_ALLOWED_USERS set in .env, deploy.sh fills allowFrom and
+      // switches dmPolicy to "allowlist" — the recommended one-owner setup.
+      // Without it, DMs fall back to pairing: approve with
       //   ./deploy.sh openclaw cli pairing approve telegram <CODE>
       enabled: true,
       dmPolicy: "pairing",
+      allowFrom: [
+        // Populated by deploy.sh from TELEGRAM_ALLOWED_USERS in .env.
+        // __LONA_ALLOWFROM__ (do not remove this marker)
+      ],
       groupPolicy: "allowlist",
       groups: {
         // Populated by deploy.sh from TELEGRAM_GROUP_ALLOWED_CHATS in .env.

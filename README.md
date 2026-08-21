@@ -112,7 +112,7 @@ Full setup, the Claude paths, and platform caveats: **[docs/subscriptions.md](do
 
 | | OpenClaw | Hermes |
 |---|---|---|
-| **DMs** | Pairing: stranger gets a code, you approve it | Allowlist: `TELEGRAM_ALLOWED_USERS` |
+| **DMs** | Allowlist: `TELEGRAM_ALLOWED_USERS` (injected on `up`; first id becomes command owner). Empty → pairing: stranger gets a code, you approve it | Allowlist: `TELEGRAM_ALLOWED_USERS` |
 | **Groups** | Group allowlist, injected by deploy.sh from `TELEGRAM_GROUP_ALLOWED_CHATS` | Your allowlisted users work instantly; add the group id to open it to all members |
 | **Group noise** | `requireMention: true` set per injected group | `require_mention: true` set in the template |
 | **Forum topics** | Own session per topic; per-topic agent override | Own session per topic; per-topic skill binding |
@@ -125,15 +125,19 @@ To use the bot in a group: disable privacy mode in @BotFather (`/setprivacy`) or
 |---|---|
 | Change model, channels, skills | `./deploy.sh <platform> config` |
 | Change secrets or ports (`.env`) | edit `.env`, then `./deploy.sh <platform> up` (recreate — `restart` won't pick up env) |
-| Upgrade platform version | `./deploy.sh <platform> update` |
+| Upgrade platform version | `./deploy.sh <platform> update` — **run this regularly**: OpenClaw shipped a critical pairing privilege-escalation fix in 2026.3.28 ([CVE-2026-33579](https://nvd.nist.gov/vuln/detail/CVE-2026-33579)); staying current is the security baseline |
+| Security check (OpenClaw) | runs automatically on `up`/`update`; manual: `./deploy.sh openclaw cli security audit --deep` |
 | Back up all state | `./deploy.sh <platform> backup` |
-| Switch platforms | `./deploy.sh openclaw down && ./deploy.sh hermes` — shared `.env` |
+| Switch platforms | `./deploy.sh openclaw down && ./deploy.sh hermes` — shared `.env`. Hermes can import OpenClaw state: `./deploy.sh hermes cli claw migrate` |
 | Open the dashboard | `ssh -L 18789:127.0.0.1:18789 user@vps` (OpenClaw) / `ssh -L 9119:127.0.0.1:9119 user@vps` (Hermes) |
 
 ## Security model
 
 - **Network:** only Telegram long-polling leaves the box; dashboards bind to loopback and are reached via SSH tunnel. Expose them only behind a TLS reverse proxy (change `OPENCLAW_BIND` / `HERMES_DASHBOARD_BIND`).
-- **Access:** deny-by-default on both platforms — unknown Telegram users are blocked, groups must be allowlisted.
+- **Access:** deny-by-default on both platforms — unknown Telegram users are blocked, groups must be allowlisted. OpenClaw DMs prefer an explicit numeric allowlist over pairing (the upstream-recommended one-owner setup), and each DM sender gets an isolated session.
+- **Blast radius:** free models are markedly easier to prompt-inject than frontier ones, so the OpenClaw template ships with workspace-only filesystem access and elevated tools disabled, and the Hermes template caps tool-loop iterations and hard-stops runaway loops. All of it is plain config — relax per agent once you move to a stronger model.
+- **Audit:** `deploy.sh` runs OpenClaw's built-in `security audit --fix` after every `up`/`update` (tightens file permissions, flips risky open policies to allowlists).
+- **Updates:** `:latest` images + `./deploy.sh <platform> update` on a regular cadence — the 2026 OpenClaw pairing CVE was fixed upstream within days; deployed boxes only got the fix by pulling.
 - **Secrets:** generated automatically, stored only in `.env` (`chmod 600`, git-ignored); OAuth tokens persist in git-ignored `./data/`.
 
 ## Repository layout

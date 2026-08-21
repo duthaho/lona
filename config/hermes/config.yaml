@@ -2,6 +2,12 @@
 # Edit that copy or run: ./deploy.sh hermes config
 # Reference: cli-config.yaml.example at https://github.com/NousResearch/hermes-agent
 
+# NOTE for macOS/NFS/SMB hosts: the ./data/hermes bind mount is not
+# WAL-crash-safe through virtiofs — set journal_mode to "delete" there.
+# Linux ext4 (the normal VPS case) is fine with the default.
+# database:
+#   journal_mode: "delete"
+
 model:
   provider: openrouter
   # Model choice rationale: see README "Free tier".
@@ -17,10 +23,64 @@ fallback_model:
 terminal:
   backend: local
 
-# Keep background tasks (compression, summaries) on free models.
+agent:
+  # Cap tool-calling iterations per turn (upstream default: 500). A messaging
+  # assistant rarely needs more than ~100, and every wasted iteration burns
+  # the shared free-tier daily quota. Raise for heavy coding sessions.
+  max_turns: 100
+  # Fast failover: with a fallback chain configured, don't retry a flaky
+  # primary 3x before switching (upstream recommendation).
+  api_max_retries: 1
+
+# Stop runaway tool loops instead of just warning — weak/free models loop
+# more, and loops burn the free-tier quota.
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: true
+
+compression:
+  # Lona's default primary has a 1M-token context, so the ratio-based
+  # compression threshold rarely fires and bulky tool outputs get re-billed
+  # every turn. This enables the deterministic, no-LLM prune of stale tool
+  # results (upstream's suggested value).
+  proactive_prune_tokens: 48000
+  # Compact a thread that resumes after 30+ min idle, before the first
+  # reply — long-lived Telegram chats stop re-reading stale context.
+  idle_compact_after_seconds: 1800
+  # Cleanest setup for long-running messaging sessions (upstream's advice):
+  # protect only the system prompt + rolling summary + recent tail.
+  protect_first_n: 0
+
+# Only relevant after switching to Claude (docs/subscriptions.md):
+# prompt_caching:
+#   cache_ttl: "1h"   # longer Anthropic cache TTL for chats with pauses
+
+# Keep background tasks (compression, summaries) on free models, and cap
+# their concurrency — retry bursts during provider congestion are what
+# trigger OpenRouter's free-tier 429 cascades.
 auxiliary:
   free_only: true
   openrouter_model: nvidia/nemotron-3-nano-30b-a3b:free
+  compression:
+    max_concurrency: 2
+    reasoning_effort: "low"   # summaries don't need deep thinking
+  title_generation:
+    max_concurrency: 2
+  session_search:
+    max_concurrency: 2
+
+# Sessions never auto-reset by default; memory survives resets either way.
+# Opt in to cap the per-message cost of long-lived chats:
+# session_reset:
+#   mode: both          # "idle", "daily", or "both"
+#   idle_minutes: 1440
+#   at_hour: 4
+
+# Hardened variant: free models are easier to prompt-inject than frontier
+# ones, so consider dropping raw terminal/browser access on chat surfaces
+# (default Telegram preset includes both). Uncomment to apply:
+# platform_toolsets:
+#   telegram: [web, vision, file, skills, todo, cronjob, messaging]
 
 platforms:
   telegram:
@@ -28,3 +88,8 @@ platforms:
       # In groups, reply only to @mentions, replies to the bot, or commands.
       # DMs are never gated.
       require_mention: true
+
+# Progressive message edits while the bot streams its reply on
+# Telegram/Discord/Slack. Off upstream; nice UX — enable if you like it.
+# streaming:
+#   enabled: true
