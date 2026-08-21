@@ -76,11 +76,14 @@ extract_chain_openclaw() {
     | grep -o 'primary:[[:space:]]*"[^"]*"' | head -1 \
     | sed 's/.*"\(.*\)"/\1/')" || true
   [ -n "$primary" ] && emit_model "$primary"
+  # `|| true`: grep exits 1 when a config has no openrouter fallbacks (e.g. a
+  # gemini-only chain) — that is not an error, and under `set -o pipefail` it
+  # would otherwise abort the caller's `chain="$(extract_chain)"`.
   printf '%s\n' "$stripped" | grep -o '"openrouter/[^"]*"' | tr -d '"' \
-    | while IFS= read -r ref; do
-        [ "$ref" = "$primary" ] && continue
-        emit_model "$ref"
-      done
+    | { while IFS= read -r ref; do
+          [ "$ref" = "$primary" ] && continue
+          emit_model "$ref"
+        done; } || true
 }
 
 extract_chain_hermes() {
@@ -192,7 +195,9 @@ notify() { # rc results
   done <<EOF
 $results
 EOF
-  state="$rc:$(printf '%s\n' $issues | sort | tr '\n' ' ')"
+  # Quote + tr-split (not unquoted word-splitting) so a model id can never
+  # be glob-expanded when building the comparison key.
+  state="$rc:$(printf '%s' "$issues" | tr ' ' '\n' | sort | tr '\n' ' ')"
   prev="$(cat "$state_file" 2>/dev/null || true)"
   [ "$state" = "$prev" ] && return 0
   if [ "$rc" = 0 ] && [ -z "$prev" ]; then
@@ -226,8 +231,11 @@ run_probe() {
   local chain results="" idx=0 line provider id status tier
   chain="$(extract_chain)"
   if [ -z "$chain" ]; then
-    warn "No probeable models found in the $PLATFORM config."
-    exit 1
+    # A subscription-only config (paid primary, no free fallbacks) has no
+    # free chain to check — that is healthy, not degraded. Exit 0 so the
+    # post-deploy quick check never cries wolf on such a setup.
+    say "$PLATFORM: no free models in the chain — nothing to probe."
+    exit 0
   fi
   fetch_listing
   while IFS= read -r line; do
@@ -310,9 +318,11 @@ cron_schedule() {
 }
 
 cron_install() {
-  local marker="# lona-doctor-$PLATFORM" entry current
-  # Repo path single-quoted: cron lines are parsed by sh, spaces must survive.
-  entry="$(cron_schedule) cd '$PWD' && ./deploy.sh $PLATFORM doctor --notify --quiet $marker"
+  local marker="# lona-doctor-$PLATFORM" entry current qpwd
+  # Single-quote the repo path so spaces survive sh parsing, escaping any
+  # embedded single quote via the '\'' idiom.
+  qpwd="'$(printf '%s' "$PWD" | sed "s/'/'\\\\''/g")'"
+  entry="$(cron_schedule) cd $qpwd && ./deploy.sh $PLATFORM doctor --notify --quiet $marker"
   current="$("$CRONTAB_CMD" -l 2>/dev/null | grep -vF "$marker" || true)"
   printf '%s\n%s\n' "$current" "$entry" | sed '/^$/d' | "$CRONTAB_CMD" -
   say "Installed cron entry: $entry"

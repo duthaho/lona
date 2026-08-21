@@ -181,3 +181,17 @@ assert_eq 1 "$rc" "(quiet degraded exit)"
 assert_contains "$out" "DEAD" "(quiet degraded: report printed)"
 
 echo "   quiet mode ok"
+
+# ---- Review-fix B: subscription-only config (no free models) → nothing to
+# probe is not a failure; exit 0 so post-deploy check never false-alarms ----
+cat > data/hermes/config.yaml <<'EOF'
+model:
+  provider: openai
+  default: gpt-5.3-codex-spark
+EOF
+rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+assert_eq 0 "$rc" "(no free models: exit 0)"
+assert_contains "$out" "no free models" "(no free models: clear note)"
+n="$(grep -c 'chat/completions' "$STUB_DIR/requests.log" || true)"
+
+echo "   no-free-model handling ok"

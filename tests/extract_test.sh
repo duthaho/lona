@@ -36,6 +36,23 @@ expected='gemini:gemini-3.6-flash
 openrouter:z-ai/glm-5.2:free'
 assert_eq "$expected" "$out" "(openclaw seeded + gemini)"
 
+# --- OpenClaw: gemini-only primary, NO openrouter fallbacks — must not
+# abort under set -euo pipefail (the trailing openrouter grep finds nothing).
+cat > data/openclaw/openclaw.json <<'EOF'
+{
+  agents: {
+    defaults: {
+      model: {
+        primary: "google/gemini-3.6-flash",
+      },
+    },
+  },
+}
+EOF
+rc=0; out="$(scripts/doctor.sh openclaw --print-chain)" || rc=$?
+assert_eq 0 "$rc" "(gemini-only extraction exit)"
+assert_eq "gemini:gemini-3.6-flash" "$out" "(gemini-only chain)"
+
 echo "   openclaw extraction ok"
 
 # --- Hermes: template fallback — default, fallback_model, auxiliary, in order

@@ -44,4 +44,15 @@ assert_eq 1 "$(entries)" "(uninstall idempotent)"
 scripts/doctor.sh openclaw uninstall >/dev/null
 assert_eq 0 "$(entries)" "(all removed)"
 
+# Review-fix E: a repo path containing a single quote must not break the
+# installed cron line (single-quote escaping).
+QUOTED_DIR="$(dirname "$SANDBOX")/od'd"
+cp -r "$SANDBOX" "$QUOTED_DIR"
+( cd "$QUOTED_DIR" && scripts/doctor.sh hermes install >/dev/null )
+line="$(grep 'lona-doctor-hermes' "$FAKE_CRON_FILE")"
+# The quoted cd target must round-trip through sh back to the real path.
+cdpart="${line#* cd }"; cdpart="${cdpart%% && *}"
+recovered="$(sh -c "printf %s $cdpart")"
+assert_eq "$QUOTED_DIR" "$recovered" "(cron path round-trips through sh with a quote)"
+
 echo "   cron install/uninstall ok"
