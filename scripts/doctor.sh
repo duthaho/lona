@@ -177,6 +177,51 @@ probe_completion_gemini() { # model-id -> OK|LIMITED|DEAD|ERROR
   status_by_code "$code"
 }
 
+# ---- Telegram notification [D4] --------------------------------------------
+# DM the owner only when the health state changes (state persisted in
+# data/doctor-state-<platform>), including a recovery message. On delivery
+# failure the state is NOT persisted, so the next run retries the alert.
+TELEGRAM_API_BASE="${TELEGRAM_API_BASE:-https://api.telegram.org}"
+
+notify() { # rc results
+  local rc="$1" results="$2" state_file="data/doctor-state-$PLATFORM"
+  local state issues="" prev token chat_id msg code status id tier
+  while IFS='|' read -r status id tier; do
+    [ -n "$status" ] || continue
+    case "$status" in OK|SKIP) ;; *) issues="${issues}${id}=${status} " ;; esac
+  done <<EOF
+$results
+EOF
+  state="$rc:$(printf '%s\n' $issues | sort | tr '\n' ' ')"
+  prev="$(cat "$state_file" 2>/dev/null || true)"
+  [ "$state" = "$prev" ] && return 0
+  if [ "$rc" = 0 ] && [ -z "$prev" ]; then
+    # First observation and it's healthy — record silently, no DM.
+    printf '%s\n' "$state" > "$state_file"
+    return 0
+  fi
+  token="$(env_val TELEGRAM_BOT_TOKEN)"
+  chat_id="$(env_val TELEGRAM_ALLOWED_USERS | tr -d ' ' | cut -d, -f1)"
+  if [ -z "$token" ] || [ -z "$chat_id" ]; then
+    warn "Telegram not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_USERS) — cannot notify."
+    return 0
+  fi
+  if [ "$rc" = 0 ]; then
+    msg="✅ Lona doctor ($PLATFORM): model chain healthy again."
+  else
+    msg="⚠️ Lona doctor ($PLATFORM): model chain issue — ${issues:-degraded}· run: ./deploy.sh $PLATFORM doctor"
+  fi
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$HTTP_TIMEOUT" \
+    -X POST "$TELEGRAM_API_BASE/bot$token/sendMessage" \
+    --data-urlencode "chat_id=$chat_id" --data-urlencode "text=$msg" \
+    || echo 000)"
+  if [ "$code" = 200 ]; then
+    printf '%s\n' "$state" > "$state_file"
+  else
+    warn "Telegram notify failed (HTTP $code) — state kept, will retry next run."
+  fi
+}
+
 run_probe() {
   local chain results="" idx=0 line provider id status tier
   chain="$(extract_chain)"
@@ -245,6 +290,7 @@ EOF
     2) summary="primary unusable" ;;
   esac
   say "$PLATFORM model chain: $summary"
+  [ "$NOTIFY" = 1 ] && notify "$rc" "$results"
   exit "$rc"
 }
 
