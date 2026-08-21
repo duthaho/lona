@@ -3,7 +3,7 @@
 #
 #   ./deploy.sh openclaw            # deploy OpenClaw (default action: up)
 #   ./deploy.sh hermes              # deploy Hermes Agent
-#   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|backup|cli
+#   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|backup|doctor|cli
 #
 # Examples:
 #   ./deploy.sh openclaw logs
@@ -200,6 +200,14 @@ sync_openclaw_users() {
 
 dc() { docker compose --profile "$PLATFORM" "$@"; }
 
+# Zero-cost chain check after every deploy [free-model ids rotate]: listing
+# tier only, never blocks the deploy. Full check: ./deploy.sh <p> doctor
+doctor_quick() {
+  if ! scripts/doctor.sh "$PLATFORM" --quick; then
+    warn "Model chain degraded — run: ./deploy.sh $PLATFORM doctor"
+  fi
+}
+
 # Post-deploy hardening: OpenClaw's built-in audit tightens file permissions
 # and flips risky open policies to allowlists. Non-fatal — findings that need
 # a human are printed for review.
@@ -257,6 +265,7 @@ case "$ACTION" in
     say "Pulling image + starting $PLATFORM"
     dc pull
     dc up -d
+    doctor_quick
     audit_openclaw
     next_steps
     ;;
@@ -268,7 +277,11 @@ case "$ACTION" in
     say "Updating $PLATFORM to latest image"
     dc pull
     dc up -d
+    doctor_quick
     audit_openclaw
+    ;;
+  doctor)
+    exec scripts/doctor.sh "$PLATFORM" "$@"
     ;;
   config)
     case "$PLATFORM" in
