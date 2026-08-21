@@ -147,3 +147,16 @@ n="$(grep -c 'generateContent' "$STUB_DIR/requests.log" || true)"
 assert_eq 0 "$n" "(gemini keyless: no request)"
 
 echo "   gemini probe ok"
+
+# ---- T8: no probe run may modify platform config [D1] ----
+mkdir -p data/openclaw
+cp config/openclaw/openclaw.json data/openclaw/openclaw.json
+listing_all
+before="$(data_checksums)"
+scripts/doctor.sh hermes >/dev/null 2>&1 || true
+scripts/doctor.sh hermes --deep >/dev/null 2>&1 || true
+scripts/doctor.sh openclaw --quick >/dev/null 2>&1 || true
+after="$(data_checksums)"
+assert_eq "$before" "$after" "(configs untouched by probes)"
+
+echo "   config immutability ok"

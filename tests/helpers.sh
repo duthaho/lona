@@ -41,6 +41,13 @@ stub_start() {
 
 stub_stop() { [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null || true; }
 
+# Checksums of everything under data/ except the doctor's own state file
+# (the one file it is allowed to write) [D1, AC7]. Run from $SANDBOX.
+data_checksums() {
+  find data -type f ! -name 'doctor-state-*' -print0 2>/dev/null \
+    | sort -z | xargs -0 -r sha256sum
+}
+
 fail() { echo "  assert failed: $*" >&2; exit 1; }
 
 assert_eq() { # expected actual [label]
