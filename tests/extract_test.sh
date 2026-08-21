@@ -37,3 +37,29 @@ openrouter:z-ai/glm-5.2:free'
 assert_eq "$expected" "$out" "(openclaw seeded + gemini)"
 
 echo "   openclaw extraction ok"
+
+# --- Hermes: template fallback — default, fallback_model, auxiliary, in order
+out="$(scripts/doctor.sh hermes --print-chain)"
+expected='openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
+openrouter:nvidia/nemotron-3-super-120b-a12b:free
+openrouter:nvidia/nemotron-3-nano-30b-a3b:free'
+assert_eq "$expected" "$out" "(hermes template chain)"
+
+# --- Hermes: seeded data/ precedence + gemini provider detection
+mkdir -p data/hermes
+cat > data/hermes/config.yaml <<'EOF'
+model:
+  provider: gemini
+  # default: should-not/appear:free
+  default: gemini-3.6-flash
+
+fallback_model:
+  provider: openrouter
+  model: z-ai/glm-5.2:free
+EOF
+out="$(scripts/doctor.sh hermes --print-chain)"
+expected='gemini:gemini-3.6-flash
+openrouter:z-ai/glm-5.2:free'
+assert_eq "$expected" "$out" "(hermes seeded + gemini)"
+
+echo "   hermes extraction ok"
