@@ -117,3 +117,103 @@ if [ "$ACTION" = print-chain ]; then
   extract_chain
   exit 0
 fi
+
+# ---- Probe engine ----------------------------------------------------------
+say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
+
+env_val() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
+
+OPENROUTER_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
+HTTP_TIMEOUT="${DOCTOR_HTTP_TIMEOUT:-15}"
+
+# Tiered probe [D2]: one free listing fetch catches rotated/deprecated ids;
+# a 1-token completion (real availability, incl. 429 congestion) is spent
+# only on the primary — or on every model with --deep, on none with --quick.
+LISTING_OK=0
+LISTING_BODY=""
+fetch_listing() {
+  if LISTING_BODY="$(curl -fsS --max-time "$HTTP_TIMEOUT" \
+      "$OPENROUTER_BASE_URL/models" 2>/dev/null)"; then
+    LISTING_OK=1
+  else
+    warn "OpenRouter model listing unavailable — listing tier degraded to ERROR"
+  fi
+}
+
+listed() { printf '%s' "$LISTING_BODY" | grep -qF "\"$1\""; }
+
+# 1-token completion probe -> status by HTTP code
+probe_completion_openrouter() { # model-id -> OK|LIMITED|DEAD|ERROR
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$HTTP_TIMEOUT" \
+    -X POST "$OPENROUTER_BASE_URL/chat/completions" \
+    -H "Authorization: Bearer $(env_val OPENROUTER_API_KEY)" \
+    -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$1\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
+    || echo 000)"
+  case "$code" in
+    200) echo OK ;;
+    *)   echo ERROR ;;
+  esac
+}
+
+run_probe() {
+  local chain results="" idx=0 line provider id status tier
+  chain="$(extract_chain)"
+  if [ -z "$chain" ]; then
+    warn "No probeable models found in the $PLATFORM config."
+    exit 1
+  fi
+  fetch_listing
+  while IFS= read -r line; do
+    provider="${line%%:*}"
+    id="${line#*:}"
+    case "$provider" in
+      openrouter)
+        # Listing tier first — a rotated id is DEAD, no quota spent on it.
+        if [ "$LISTING_OK" = 1 ]; then
+          if listed "$id"; then status=OK tier=listing; else status=DEAD tier=listing; fi
+        else
+          status=ERROR tier=listing
+        fi
+        # Completion tier for the primary (unless the listing already
+        # declared it dead).
+        if [ "$idx" = 0 ] && [ "$status" != DEAD ]; then
+          status="$(probe_completion_openrouter "$id")" tier=completion
+        fi
+        ;;
+      gemini)
+        status=ERROR tier=unsupported ;;
+    esac
+    results="${results}${status}|${id}|${tier}
+"
+    idx=$((idx + 1))
+  done <<EOF
+$chain
+EOF
+
+  # Report + exit code [D6]
+  local rc=0 first=1 summary
+  while IFS='|' read -r status id tier; do
+    [ -n "$status" ] || continue
+    printf '  %-7s %s (%s)\n' "$status" "$id" "$tier"
+    if [ "$first" = 1 ]; then
+      [ "$status" = OK ] || rc=2
+      first=0
+    elif [ "$status" != OK ] && [ "$rc" = 0 ]; then
+      rc=1
+    fi
+  done <<EOF
+$results
+EOF
+  case "$rc" in
+    0) summary="chain healthy" ;;
+    1) summary="chain degraded (fallback issues)" ;;
+    2) summary="primary unusable" ;;
+  esac
+  say "$PLATFORM model chain: $summary"
+  exit "$rc"
+}
+
+run_probe
