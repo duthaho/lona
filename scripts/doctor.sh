@@ -294,4 +294,34 @@ EOF
   exit "$rc"
 }
 
-run_probe
+# ---- Scheduled runs via host cron [D3] -------------------------------------
+CRONTAB_CMD="${CRONTAB_CMD:-crontab}"
+
+cron_schedule() {
+  local s="${DOCTOR_CRON_SCHEDULE:-}"
+  [ -n "$s" ] || s="$(env_val DOCTOR_CRON_SCHEDULE)"
+  [ -n "$s" ] || s="0 */6 * * *"
+  printf '%s' "$s"
+}
+
+cron_install() {
+  local marker="# lona-doctor-$PLATFORM" entry current
+  # Repo path single-quoted: cron lines are parsed by sh, spaces must survive.
+  entry="$(cron_schedule) cd '$PWD' && ./deploy.sh $PLATFORM doctor --notify --quiet $marker"
+  current="$("$CRONTAB_CMD" -l 2>/dev/null | grep -vF "$marker" || true)"
+  printf '%s\n%s\n' "$current" "$entry" | sed '/^$/d' | "$CRONTAB_CMD" -
+  say "Installed cron entry: $entry"
+}
+
+cron_uninstall() {
+  local marker="# lona-doctor-$PLATFORM" current
+  current="$("$CRONTAB_CMD" -l 2>/dev/null | grep -vF "$marker" || true)"
+  printf '%s\n' "$current" | sed '/^$/d' | "$CRONTAB_CMD" -
+  say "Removed cron entry for $PLATFORM doctor (if present)."
+}
+
+case "$ACTION" in
+  install)   cron_install ;;
+  uninstall) cron_uninstall ;;
+  probe)     run_probe ;;
+esac
