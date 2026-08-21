@@ -102,3 +102,48 @@ n="$(grep -c 'chat/completions' "$STUB_DIR/requests.log" || true)"
 assert_eq 0 "$n" "(--quick: no completions)"
 
 echo "   completion probe + modes ok"
+
+# ---- T7: gemini primary + openrouter fallback ----
+cat > data/hermes/config.yaml <<'EOF'
+model:
+  provider: gemini
+  default: gemini-test
+fallback_model:
+  provider: openrouter
+  model: beta/two:free
+EOF
+echo '{"data":[{"id":"beta/two:free"}]}' > "$STUB_DIR/models.json"
+export GEMINI_BASE_URL="$STUB_URL"
+echo 'GOOGLE_API_KEY=g-test-key' >> .env
+
+g_case() { # stub-status expected-status expected-rc
+  echo "{\"gemini-test\": $1}" > "$STUB_DIR/gemini.json"
+  clear_log
+  rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+  assert_eq "$3" "$rc" "(gemini $1 exit)"
+  line="$(printf '%s\n' "$out" | grep 'gemini-test (completion)')"
+  assert_contains "$line" "$2" "(gemini $1 status)"
+}
+g_case 200 OK 0
+g_case 429 LIMITED 2
+g_case '"timeout"' ERROR 2
+rm "$STUB_DIR/gemini.json"
+
+# --quick → no gemini request, SKIP status, healthy exit
+clear_log
+rc=0; out="$(scripts/doctor.sh hermes --quick 2>&1)" || rc=$?
+assert_eq 0 "$rc" "(gemini --quick exit)"
+assert_contains "$out" "SKIP" "(gemini --quick skipped)"
+n="$(grep -c 'generateContent' "$STUB_DIR/requests.log" || true)"
+assert_eq 0 "$n" "(gemini --quick: no request)"
+
+# no GOOGLE_API_KEY → ERROR without any request
+sed -i '/^GOOGLE_API_KEY=/d' .env
+clear_log
+rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+assert_eq 2 "$rc" "(gemini keyless exit)"
+assert_contains "$out" "no GOOGLE_API_KEY" "(gemini keyless reason)"
+n="$(grep -c 'generateContent' "$STUB_DIR/requests.log" || true)"
+assert_eq 0 "$n" "(gemini keyless: no request)"
+
+echo "   gemini probe ok"

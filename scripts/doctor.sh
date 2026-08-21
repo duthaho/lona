@@ -143,6 +143,15 @@ fetch_listing() {
 
 listed() { printf '%s' "$LISTING_BODY" | grep -qF "\"$1\""; }
 
+status_by_code() { # http-code -> OK|LIMITED|DEAD|ERROR
+  case "$1" in
+    200)     echo OK ;;
+    429)     echo LIMITED ;;
+    400|404) echo DEAD ;;
+    *)       echo ERROR ;;   # 5xx, auth failures, curl timeout (000)
+  esac
+}
+
 # 1-token completion probe -> status by HTTP code
 probe_completion_openrouter() { # model-id -> OK|LIMITED|DEAD|ERROR
   local code
@@ -152,12 +161,20 @@ probe_completion_openrouter() { # model-id -> OK|LIMITED|DEAD|ERROR
     -H 'Content-Type: application/json' \
     -d "{\"model\":\"$1\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"max_tokens\":1}" \
     || echo 000)"
-  case "$code" in
-    200)     echo OK ;;
-    429)     echo LIMITED ;;
-    400|404) echo DEAD ;;
-    *)       echo ERROR ;;   # 5xx, auth failures, curl timeout (000)
-  esac
+  status_by_code "$code"
+}
+
+# Gemini (Google AI Studio) has no free listing tier — completion only [D7].
+GEMINI_BASE_URL="${GEMINI_BASE_URL:-https://generativelanguage.googleapis.com}"
+probe_completion_gemini() { # model-id -> OK|LIMITED|DEAD|ERROR
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "$HTTP_TIMEOUT" \
+    -X POST "$GEMINI_BASE_URL/v1beta/models/$1:generateContent" \
+    -H "x-goog-api-key: $(env_val GOOGLE_API_KEY)" \
+    -H 'Content-Type: application/json' \
+    -d '{"contents":[{"parts":[{"text":"ping"}]}],"generationConfig":{"maxOutputTokens":1}}' \
+    || echo 000)"
+  status_by_code "$code"
 }
 
 run_probe() {
@@ -188,7 +205,18 @@ run_probe() {
         fi
         ;;
       gemini)
-        status=ERROR tier=unsupported ;;
+        # Completion-only; skipped under --quick and for non-primary members
+        # in default mode (SKIP is exit-code-neutral: a quick deploy check
+        # must not cry wolf on every Gemini setup).
+        if [ "$MODE" = quick ] \
+          || { [ "$idx" != 0 ] && [ "$MODE" != deep ]; }; then
+          status=SKIP tier=quick
+        elif [ -z "$(env_val GOOGLE_API_KEY)" ]; then
+          status="ERROR" tier="no GOOGLE_API_KEY"
+        else
+          status="$(probe_completion_gemini "$id")" tier=completion
+        fi
+        ;;
     esac
     results="${results}${status}|${id}|${tier}
 "
@@ -203,9 +231,9 @@ EOF
     [ -n "$status" ] || continue
     printf '  %-7s %s (%s)\n' "$status" "$id" "$tier"
     if [ "$first" = 1 ]; then
-      [ "$status" = OK ] || rc=2
+      [ "$status" = OK ] || [ "$status" = SKIP ] || rc=2
       first=0
-    elif [ "$status" != OK ] && [ "$rc" = 0 ]; then
+    elif [ "$status" != OK ] && [ "$status" != SKIP ] && [ "$rc" = 0 ]; then
       rc=1
     fi
   done <<EOF
