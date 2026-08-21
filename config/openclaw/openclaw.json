@@ -1,0 +1,43 @@
+// OpenClaw gateway config (JSON5) — seeded to data/openclaw/openclaw.json on
+// first deploy. Edit that copy (hot-reloads) or run: ./deploy.sh openclaw config
+// Reference: https://docs.openclaw.ai/gateway/configuration
+{
+  gateway: {
+    mode: "local",
+    port: 18789,
+    auth: { token: "${OPENCLAW_GATEWAY_TOKEN}" },
+    reload: { mode: "hybrid" },
+  },
+
+  agents: {
+    defaults: {
+      model: {
+        // Free tier: OpenRouter's router picks a capable :free model,
+        // with pinned free fallbacks on errors or rate limits.
+        primary: "openrouter/openrouter/free",
+        fallbacks: [
+          "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+          "openrouter/google/gemma-4-31b-it:free",
+          "openrouter/openai/gpt-oss-20b:free",
+        ],
+        // Using a subscription instead? See docs/subscriptions.md, then:
+        // primary: "openai/gpt-5.3-codex-spark",   // ChatGPT Plus/Pro
+        // primary: "anthropic/claude-opus-5",      // Claude Pro/Max
+      },
+    },
+  },
+
+  channels: {
+    telegram: {
+      // Bot token comes from TELEGRAM_BOT_TOKEN. DMs use pairing: approve with
+      //   ./deploy.sh openclaw cli pairing approve telegram <CODE>
+      enabled: true,
+      dmPolicy: "pairing",
+      groupPolicy: "allowlist",
+      groups: {
+        // Populated by deploy.sh from TELEGRAM_GROUP_ALLOWED_CHATS in .env.
+        // __LONA_GROUPS__ (do not remove this marker)
+      },
+    },
+  },
+}

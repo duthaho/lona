@@ -1,0 +1,23 @@
+# Hermes Agent config — seeded to data/hermes/config.yaml on first deploy.
+# Edit that copy or run: ./deploy.sh hermes config
+# Reference: cli-config.yaml.example at https://github.com/NousResearch/hermes-agent
+
+model:
+  provider: openrouter
+  # Free-models router. Using a subscription instead? See docs/subscriptions.md.
+  default: openrouter/free
+
+terminal:
+  backend: local
+
+# Keep background tasks (compression, summaries) on free models as well —
+# otherwise Hermes falls back to a paid model for them.
+auxiliary:
+  free_only: true
+
+platforms:
+  telegram:
+    extra:
+      # In groups, reply only to @mentions, replies to the bot, or commands.
+      # DMs are never gated.
+      require_mention: true
