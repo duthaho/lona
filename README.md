@@ -79,6 +79,7 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 | `config` | Edit the platform config in `$EDITOR`, apply on save |
 | `update` | Pull the latest image and recreate |
 | `backup` | Archive `./data/<platform>` into `./backups/` |
+| `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |
 | `cli …` | Run the platform's own CLI inside the container |
 
 ## Models
@@ -96,6 +97,19 @@ We deliberately avoid OpenRouter's `openrouter/free` auto-router: it picks free 
 **Gemini for free:** OpenRouter's free pool no longer carries Gemini/DeepSeek/Grok, but Google's own [AI Studio](https://aistudio.google.com) key has a generous free tier. Set `GOOGLE_API_KEY` in `.env` and switch the model to `gemini-3.6-flash` (both platforms support it natively — see the config templates; older Gemini 2.5 models are closed to new API users).
 
 > **Quota note:** OpenRouter's free-tier daily cap is per *account*, not per model. A one-time $10 credit purchase raises it to 1,000 requests/day — the best value upgrade for a personal assistant. Free model ids rotate; browse [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0).
+
+### Chain health
+
+Free model ids rotate and their hosts congest — and a dead chain fails *silently*. The built-in doctor makes it observable:
+
+```bash
+./deploy.sh <platform> doctor            # listing check on every model + 1-token probe of the primary
+./deploy.sh <platform> doctor --deep     # 1-token probe of every model (one free-tier request each)
+./deploy.sh <platform> doctor install    # cron every 6h, DMs you on Telegram when health changes
+./deploy.sh <platform> doctor uninstall  # remove the cron entry
+```
+
+Statuses: `OK` · `DEAD` (id rotated/removed) · `LIMITED` (429 congestion) · `ERROR`. Exit codes: `0` healthy, `1` a fallback is degraded, `2` the primary is unusable. The zero-cost listing check also runs automatically after every `up`/`update` (warn-only). The default probe costs one free-tier request; a `DEAD` id is caught by the free listing tier and never probed. Alerts fire only on state *change* (including recovery) — a persistent outage won't spam you. Schedule via `DOCTOR_CRON_SCHEDULE` in `.env`. The doctor never modifies your config.
 
 ### Your subscription (recommended for coding)
 
@@ -128,6 +142,7 @@ To use the bot in a group: disable privacy mode in @BotFather (`/setprivacy`) or
 | Upgrade platform version | `./deploy.sh <platform> update` — **run this regularly**: OpenClaw shipped a critical pairing privilege-escalation fix in 2026.3.28 ([CVE-2026-33579](https://nvd.nist.gov/vuln/detail/CVE-2026-33579)); staying current is the security baseline |
 | Security check (OpenClaw) | runs automatically on `up`/`update`; manual: `./deploy.sh openclaw cli security audit --deep` |
 | Back up all state | `./deploy.sh <platform> backup` |
+| Check model-chain health | `./deploy.sh <platform> doctor` — or `doctor install` for scheduled checks with Telegram alerts |
 | Switch platforms | `./deploy.sh openclaw down && ./deploy.sh hermes` — shared `.env`. Hermes can import OpenClaw state: `./deploy.sh hermes cli claw migrate` |
 | Open the dashboard | `ssh -L 18789:127.0.0.1:18789 user@vps` (OpenClaw) / `ssh -L 9119:127.0.0.1:9119 user@vps` (Hermes) |
 
@@ -150,7 +165,9 @@ config/
   openclaw/openclaw.json       OpenClaw template (seeded to data/ on first run)
   hermes/config.yaml           Hermes template (seeded to data/ on first run)
 scripts/bootstrap.sh           curl-able installer for a fresh server
+scripts/doctor.sh              Model-chain health checks (./deploy.sh <p> doctor)
 docs/subscriptions.md          Using ChatGPT / Claude plans instead of API keys
+tests/                         Shell test suite (bash tests/run.sh)
 data/                          Runtime state (git-ignored)
 ```
 
