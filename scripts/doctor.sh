@@ -271,10 +271,11 @@ $chain
 EOF
 
   # Report + exit code [D6]
-  local rc=0 first=1 summary
+  local rc=0 first=1 summary report=""
   while IFS='|' read -r status id tier; do
     [ -n "$status" ] || continue
-    printf '  %-7s %s (%s)\n' "$status" "$id" "$tier"
+    report="$report$(printf '  %-7s %s (%s)' "$status" "$id" "$tier")
+"
     if [ "$first" = 1 ]; then
       [ "$status" = OK ] || [ "$status" = SKIP ] || rc=2
       first=0
@@ -289,7 +290,11 @@ EOF
     1) summary="chain degraded (fallback issues)" ;;
     2) summary="primary unusable" ;;
   esac
-  say "$PLATFORM model chain: $summary"
+  # --quiet (cron hygiene): stay silent when healthy, always report trouble.
+  if [ "$QUIET" = 0 ] || [ "$rc" != 0 ]; then
+    printf '%s' "$report"
+    say "$PLATFORM model chain: $summary"
+  fi
   [ "$NOTIFY" = 1 ] && notify "$rc" "$results"
   exit "$rc"
 }

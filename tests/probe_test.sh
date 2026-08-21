@@ -160,3 +160,24 @@ after="$(data_checksums)"
 assert_eq "$before" "$after" "(configs untouched by probes)"
 
 echo "   config immutability ok"
+
+# ---- T12: --quiet is silent when healthy, loud when degraded ----
+cat > data/hermes/config.yaml <<'EOF'
+model:
+  provider: openrouter
+  default: alpha/one:free
+fallback_model:
+  provider: openrouter
+  model: beta/two:free
+EOF
+echo '{"data":[{"id":"alpha/one:free"},{"id":"beta/two:free"}]}' > "$STUB_DIR/models.json"
+rc=0; out="$(scripts/doctor.sh hermes --quiet 2>&1)" || rc=$?
+assert_eq 0 "$rc" "(quiet healthy exit)"
+assert_eq "" "$out" "(quiet healthy: no output)"
+
+echo '{"data":[{"id":"alpha/one:free"}]}' > "$STUB_DIR/models.json"
+rc=0; out="$(scripts/doctor.sh hermes --quiet 2>&1)" || rc=$?
+assert_eq 1 "$rc" "(quiet degraded exit)"
+assert_contains "$out" "DEAD" "(quiet degraded: report printed)"
+
+echo "   quiet mode ok"
