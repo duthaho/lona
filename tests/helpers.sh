@@ -21,6 +21,26 @@ EOF
 
 sandbox_teardown() { rm -rf "$(dirname "$SANDBOX")"; }
 
+# Start the fixture-driven HTTP stub (OpenRouter/Telegram/Gemini). Exports
+# STUB_DIR (fixtures + requests.log) and STUB_URL. Pair with stub_stop.
+stub_start() {
+  STUB_DIR="$(dirname "$SANDBOX")/stub"
+  mkdir -p "$STUB_DIR"
+  export STUB_DIR
+  python3 "$REPO_ROOT/tests/stub_server.py" &
+  STUB_PID=$!
+  local i=0
+  while [ ! -f "$STUB_DIR/port" ]; do
+    i=$((i + 1))
+    [ "$i" -le 50 ] || { echo "stub server did not start" >&2; exit 1; }
+    sleep 0.1
+  done
+  STUB_URL="http://127.0.0.1:$(cat "$STUB_DIR/port")"
+  export STUB_URL
+}
+
+stub_stop() { [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null || true; }
+
 fail() { echo "  assert failed: $*" >&2; exit 1; }
 
 assert_eq() { # expected actual [label]
