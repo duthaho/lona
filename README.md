@@ -77,7 +77,7 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 | `logs` | Follow container logs |
 | `status` | Container status |
 | `config` | Edit the platform config in `$EDITOR`, apply on save |
-| `update` | Pull the latest image and recreate |
+| `update` | Transactional update: back up, pull, recreate, canary, auto-rollback on failure (see [Safe updates](#safe-updates)) |
 | `backup` | Archive `./data/<platform>` into `./backups/` |
 | `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |
 | `cli …` | Run the platform's own CLI inside the container |
@@ -133,13 +133,42 @@ Full setup, the Claude paths, and platform caveats: **[docs/subscriptions.md](do
 
 To use the bot in a group: disable privacy mode in @BotFather (`/setprivacy`) or make the bot an admin, **remove and re-add the bot**, grab the chat id from `logs`, set `TELEGRAM_GROUP_ALLOWED_CHATS` in `.env`, and run `up`.
 
+## Safe updates
+
+Staying current is the security baseline (the 2026 OpenClaw pairing CVE only
+reached boxes that pulled) — but a blind `pull && recreate` can swap in a
+broken image and leave your assistant down. `update` is **transactional**: it
+takes an all-or-nothing step and can't leave the box worse than it started.
+
+```bash
+./deploy.sh <platform> update            # back up → pull → recreate → canary → rollback-on-failure
+./deploy.sh <platform> update install    # cron (daily 04:00), DMs you on success/rollback
+./deploy.sh <platform> update uninstall  # remove the cron entry
+```
+
+What one run does:
+
+1. **Snapshot** — record the running image id and archive `data/<platform>` into `./backups/` (the rollback point).
+2. **Pull + recreate** the latest image.
+3. **Canary** — wait for the new container to report **running** and (for OpenClaw, which ships a healthcheck) **healthy**, up to `UPDATE_CANARY_WAIT` seconds (default 120). A crash-looping or unhealthy container fails fast.
+4. **On success** — keep the new image and run the same post-deploy checks as `up` (model-chain quick check + OpenClaw security audit).
+5. **On failure** — **auto-rollback**: restore `data/<platform>` from the snapshot and retag/restart the previous image, returning the box to its exact pre-update state.
+
+If the pulled image is identical to the running one, `update` reports *already
+up to date* and does nothing else — so a scheduled run on an unchanged image is
+a silent no-op. With `--notify` (used by the installed cron entry) it DMs the
+first `TELEGRAM_ALLOWED_USERS` id **only** on a real change: ✅ updated or
+⚠️ rolled back. Exit codes: `0` updated or already-current, `4` rolled back,
+`5` rollback itself failed (needs a human). Schedule via `UPDATE_CRON_SCHEDULE`
+in `.env`.
+
 ## Day-2 operations
 
 | Task | How |
 |---|---|
 | Change model, channels, skills | `./deploy.sh <platform> config` |
 | Change secrets or ports (`.env`) | edit `.env`, then `./deploy.sh <platform> up` (recreate — `restart` won't pick up env) |
-| Upgrade platform version | `./deploy.sh <platform> update` — **run this regularly**: OpenClaw shipped a critical pairing privilege-escalation fix in 2026.3.28 ([CVE-2026-33579](https://nvd.nist.gov/vuln/detail/CVE-2026-33579)); staying current is the security baseline |
+| Upgrade platform version | `./deploy.sh <platform> update` — transactional (backup → canary → auto-rollback, see [Safe updates](#safe-updates)); **run this regularly** or `update install` to schedule it: OpenClaw shipped a critical pairing privilege-escalation fix in 2026.3.28 ([CVE-2026-33579](https://nvd.nist.gov/vuln/detail/CVE-2026-33579)); staying current is the security baseline |
 | Security check (OpenClaw) | runs automatically on `up`/`update`; manual: `./deploy.sh openclaw cli security audit --deep` |
 | Back up all state | `./deploy.sh <platform> backup` |
 | Check model-chain health | `./deploy.sh <platform> doctor` — or `doctor install` for scheduled checks with Telegram alerts |
@@ -152,7 +181,7 @@ To use the bot in a group: disable privacy mode in @BotFather (`/setprivacy`) or
 - **Access:** deny-by-default on both platforms — unknown Telegram users are blocked, groups must be allowlisted. OpenClaw DMs prefer an explicit numeric allowlist over pairing (the upstream-recommended one-owner setup), and each DM sender gets an isolated session.
 - **Blast radius:** free models are markedly easier to prompt-inject than frontier ones, so the OpenClaw template ships with workspace-only filesystem access and elevated tools disabled, and the Hermes template caps tool-loop iterations and hard-stops runaway loops. All of it is plain config — relax per agent once you move to a stronger model.
 - **Audit:** `deploy.sh` runs OpenClaw's built-in `security audit --fix` after every `up`/`update` (tightens file permissions, flips risky open policies to allowlists).
-- **Updates:** `:latest` images + `./deploy.sh <platform> update` on a regular cadence — the 2026 OpenClaw pairing CVE was fixed upstream within days; deployed boxes only got the fix by pulling.
+- **Updates:** `:latest` images + `./deploy.sh <platform> update` on a regular cadence (or `update install` to schedule it) — the 2026 OpenClaw pairing CVE was fixed upstream within days and deployed boxes only got the fix by pulling. Updates are [transactional](#safe-updates): a bad image is caught by the canary and rolled back, so keeping current can't brick the bot.
 - **Secrets:** generated automatically, stored only in `.env` (`chmod 600`, git-ignored); OAuth tokens persist in git-ignored `./data/`.
 
 ## Repository layout
@@ -166,6 +195,7 @@ config/
   hermes/config.yaml           Hermes template (seeded to data/ on first run)
 scripts/bootstrap.sh           curl-able installer for a fresh server
 scripts/doctor.sh              Model-chain health checks (./deploy.sh <p> doctor)
+scripts/selfupdate.sh          Transactional update + rollback (./deploy.sh <p> update)
 docs/subscriptions.md          Using ChatGPT / Claude plans instead of API keys
 tests/                         Shell test suite (bash tests/run.sh)
 data/                          Runtime state (git-ignored)
