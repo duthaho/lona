@@ -109,7 +109,7 @@ Free model ids rotate and their hosts congest — and a dead chain fails *silent
 ./deploy.sh <platform> doctor uninstall  # remove the cron entry
 ```
 
-Statuses: `OK` · `DEAD` (id rotated/removed) · `LIMITED` (429 congestion) · `ERROR`. Exit codes: `0` healthy, `1` a fallback is degraded, `2` the primary is unusable. The zero-cost listing check also runs automatically after every `up`/`update` (warn-only). The default probe costs one free-tier request; a `DEAD` id is caught by the free listing tier and never probed. Alerts fire only on state *change* (including recovery) — a persistent outage won't spam you. Schedule via `DOCTOR_CRON_SCHEDULE` in `.env`. The doctor never modifies your config.
+Statuses: `OK` · `DEAD` (id rotated/removed) · `LIMITED` (429 congestion) · `ERROR`. Exit codes: `0` healthy, `1` a fallback is degraded, `2` the primary is unusable. The zero-cost listing check also runs automatically after every `up`/`update` (warn-only). The default probe costs one free-tier request; a `DEAD` id is caught by the free listing tier and never probed. A transient `ERROR` (timeout / 5xx) is retried once before it counts, so a momentary blip doesn't cry wolf; a real `LIMITED` (429) is reported immediately, never retried (tune with `DOCTOR_PROBE_RETRIES`, default 1). Alerts fire only on state *change* (including recovery) — a persistent outage won't spam you. Schedule via `DOCTOR_CRON_SCHEDULE` in `.env`. The doctor never modifies your config.
 
 ### Your subscription (recommended for coding)
 

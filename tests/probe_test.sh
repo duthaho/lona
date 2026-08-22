@@ -7,6 +7,7 @@ cd "$SANDBOX"
 stub_start
 export OPENROUTER_BASE_URL="$STUB_URL/api/v1"
 export DOCTOR_HTTP_TIMEOUT=2
+export DOCTOR_PROBE_BACKOFF=0   # don't sleep between retries in tests
 
 # Controlled 3-model hermes chain: alpha (primary), beta, gamma.
 mkdir -p data/hermes
@@ -195,3 +196,58 @@ assert_contains "$out" "no free models" "(no free models: clear note)"
 n="$(grep -c 'chat/completions' "$STUB_DIR/requests.log" || true)"
 
 echo "   no-free-model handling ok"
+
+# ---- Retry: a transient ERROR on the primary is retried once (smooths the
+# false "primary unusable" from a one-off timeout/5xx) ----
+cat > data/hermes/config.yaml <<'EOF'
+model:
+  provider: openrouter
+  default: alpha/one:free
+fallback_model:
+  provider: openrouter
+  model: beta/two:free
+EOF
+listing_all() {
+  echo '{"data":[{"id":"alpha/one:free"},{"id":"beta/two:free"},{"id":"gamma/three:free"}]}' \
+    > "$STUB_DIR/models.json"
+}
+listing_all
+
+# fail once (500) then succeed → OK, and exactly 2 completion attempts
+echo '{"alpha/one:free": [500, 200]}' > "$STUB_DIR/completions.json"
+clear_log; curl -fsS "$STUB_URL/__reset" >/dev/null
+rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+assert_eq 0 "$rc" "(transient ERROR retried → healthy)"
+line="$(printf '%s\n' "$out" | grep 'alpha/one:free (completion)')"
+assert_contains "$line" "OK" "(retry recovers to OK)"
+n="$(grep -c 'model=alpha/one:free' "$STUB_DIR/requests.log" || true)"
+assert_eq 2 "$n" "(one retry = two attempts)"
+
+# persistent ERROR → still ERROR after the retry, 2 attempts
+echo '{"alpha/one:free": [500, 500]}' > "$STUB_DIR/completions.json"
+clear_log
+rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+assert_eq 2 "$rc" "(persistent ERROR stays exit 2)"
+n="$(grep -c 'model=alpha/one:free' "$STUB_DIR/requests.log" || true)"
+assert_eq 2 "$n" "(persistent ERROR: capped at two attempts)"
+
+# retries disabled → single attempt
+echo '{"alpha/one:free": [500, 200]}' > "$STUB_DIR/completions.json"
+clear_log; curl -fsS "$STUB_URL/__reset" >/dev/null
+rc=0; DOCTOR_PROBE_RETRIES=0 scripts/doctor.sh hermes >/dev/null 2>&1 || rc=$?
+assert_eq 2 "$rc" "(retries=0 → no recovery)"
+n="$(grep -c 'model=alpha/one:free' "$STUB_DIR/requests.log" || true)"
+assert_eq 1 "$n" "(retries=0: one attempt)"
+
+# LIMITED (429) is a real signal — NOT retried
+echo '{"alpha/one:free": 429}' > "$STUB_DIR/completions.json"
+clear_log
+rc=0; out="$(scripts/doctor.sh hermes 2>&1)" || rc=$?
+assert_eq 2 "$rc" "(429 exit 2)"
+line="$(printf '%s\n' "$out" | grep 'alpha/one:free (completion)')"
+assert_contains "$line" "LIMITED" "(429 stays LIMITED)"
+n="$(grep -c 'model=alpha/one:free' "$STUB_DIR/requests.log" || true)"
+assert_eq 1 "$n" "(429 not retried)"
+rm "$STUB_DIR/completions.json"
+
+echo "   probe retry ok"

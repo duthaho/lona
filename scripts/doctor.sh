@@ -155,6 +155,23 @@ status_by_code() { # http-code -> OK|LIMITED|DEAD|ERROR
   esac
 }
 
+# Retry a completion probe on ERROR only — the transient bucket (5xx, curl
+# timeout, connection blips). LIMITED (429) is a real congestion signal we
+# want reported, and DEAD/OK are definitive, so neither is retried. This
+# stops a one-off blip from flipping the verdict to "primary unusable".
+PROBE_RETRIES="${DOCTOR_PROBE_RETRIES:-1}"
+PROBE_BACKOFF="${DOCTOR_PROBE_BACKOFF:-1}"
+probe_with_retry() { # probe-fn model-id -> status
+  local fn="$1" id="$2" status attempt=0
+  while :; do
+    status="$("$fn" "$id")"
+    { [ "$status" != ERROR ] || [ "$attempt" -ge "$PROBE_RETRIES" ]; } \
+      && { echo "$status"; return; }
+    attempt=$((attempt + 1))
+    [ "$PROBE_BACKOFF" = 0 ] || sleep "$PROBE_BACKOFF"
+  done
+}
+
 # 1-token completion probe -> status by HTTP code
 probe_completion_openrouter() { # model-id -> OK|LIMITED|DEAD|ERROR
   local code
@@ -254,7 +271,7 @@ run_probe() {
         # costs a completion request.
         if [ "$status" != DEAD ] && [ "$MODE" != quick ] \
           && { [ "$idx" = 0 ] || [ "$MODE" = deep ]; }; then
-          status="$(probe_completion_openrouter "$id")" tier=completion
+          status="$(probe_with_retry probe_completion_openrouter "$id")" tier=completion
         fi
         ;;
       gemini)
@@ -267,7 +284,7 @@ run_probe() {
         elif [ -z "$(env_val GOOGLE_API_KEY)" ]; then
           status="ERROR" tier="no GOOGLE_API_KEY"
         else
-          status="$(probe_completion_gemini "$id")" tier=completion
+          status="$(probe_with_retry probe_completion_gemini "$id")" tier=completion
         fi
         ;;
     esac

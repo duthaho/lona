@@ -20,6 +20,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STUB_DIR = os.environ["STUB_DIR"]
 
+# Per-model request counter, so an array fixture can serve a different status
+# on each successive attempt (e.g. [500, 200] = fail once, then succeed).
+COUNTS = {}
+
+
+def seq_status(fixtures, model, default=200):
+    """Status for this model's next attempt. Scalar fixture → constant;
+    list fixture → element per attempt, last element sticking once drained."""
+    val = fixtures.get(model, default)
+    if not isinstance(val, list):
+        return val
+    n = COUNTS.get(model, 0)
+    COUNTS[model] = n + 1
+    return val[min(n, len(val) - 1)] if val else default
+
 
 def fixture(name, default=None):
     try:
@@ -58,7 +73,12 @@ class Handler(BaseHTTPRequestHandler):
             return {}
 
     def do_GET(self):
-        if self.path == "/api/v1/models":
+        if self.path == "/__reset":
+            # Test control: clear per-model attempt counters so a queued
+            # fixture starts fresh for the next doctor invocation.
+            COUNTS.clear()
+            self._reply(200, {"ok": True})
+        elif self.path == "/api/v1/models":
             self._log()
             models = fixture("models.json")
             if models is None:
@@ -75,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/v1/chat/completions":
             model = self._body_json().get("model", "")
             self._log(model)
-            status = fixture("completions.json", {}).get(model, 200)
+            status = seq_status(fixture("completions.json", {}), model)
             self._reply(status, {"choices": [{"message": {"content": "ok"}}]})
         elif re.match(r"^/bot[^/]+/sendMessage$", self.path):
             self._log()
@@ -84,7 +104,7 @@ class Handler(BaseHTTPRequestHandler):
         elif ":generateContent" in self.path:
             model = self.path.split("/")[-1].split(":")[0]
             self._log(model)
-            status = fixture("gemini.json", {}).get(model, 200)
+            status = seq_status(fixture("gemini.json", {}), model)
             self._reply(status, {"candidates": []})
         else:
             self._log()
