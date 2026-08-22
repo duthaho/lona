@@ -64,3 +64,13 @@ services:
       - ./data/hermes:/opt/data
     ports:
       - "${HERMES_DASHBOARD_BIND:-127.0.0.1}:9119:9119"
+
+# Some hosts (jumbo-frame NICs, tunnelled/overlay egress) have a reduced path
+# MTU to Telegram's data centers with ICMP "frag needed" filtered — a PMTUD
+# black hole: TCP connects but the TLS/response packets are silently dropped,
+# so long-polling hangs on "Bad Gateway"/timeouts. Capping the bridge MTU
+# keeps every packet under that path limit. Override via DOCKER_MTU in .env.
+networks:
+  default:
+    driver_opts:
+      com.docker.network.driver.mtu: "${DOCKER_MTU:-1200}"
