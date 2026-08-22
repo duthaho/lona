@@ -274,11 +274,9 @@ case "$ACTION" in
   logs)     dc logs -f --tail=200 ;;
   status)   dc ps ;;
   update)
-    say "Updating $PLATFORM to latest image"
-    dc pull
-    dc up -d
-    doctor_quick
-    audit_openclaw
+    # Transactional: backup → pull → recreate → canary → auto-rollback.
+    # `update install`/`uninstall` (in "$@") schedule it via host cron.
+    exec scripts/selfupdate.sh "$PLATFORM" "$@"
     ;;
   doctor)
     exec scripts/doctor.sh "$PLATFORM" "$@"
