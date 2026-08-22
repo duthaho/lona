@@ -40,8 +40,7 @@ rand_hex() {
   fi
 }
 
-# Portable in-place "set KEY=VALUE in .env"
-set_env_var() { # key value
+set_env_var() {
   local key="$1" val="$2"
   if grep -q "^${key}=" .env; then
     sed -i.bak "s|^${key}=.*|${key}=${val}|" .env && rm -f .env.bak
@@ -50,7 +49,7 @@ set_env_var() { # key value
   fi
 }
 
-env_val() { # key -> value or empty
+env_val() {
   grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true
 }
 
@@ -84,7 +83,6 @@ ensure_env() {
     chmod 600 .env
   fi
 
-  # Prompt for the essentials on an interactive terminal
   if [ -t 0 ]; then
     if [ -z "$(env_val OPENROUTER_API_KEY)" ]; then
       read -r -p "OpenRouter API key (https://openrouter.ai/keys): " v
@@ -98,9 +96,16 @@ ensure_env() {
       read -r -p "Your Telegram user ID (ask @userinfobot, blank to skip): " v
       [ -n "$v" ] && set_env_var TELEGRAM_ALLOWED_USERS "$v"
     fi
+    if [ -z "$(env_val GITHUB_TOKEN)" ]; then
+      read -r -p "GitHub token (unlocks github skills — github.com/settings/tokens, blank to skip): " v
+      [ -n "$v" ] && set_env_var GITHUB_TOKEN "$v"
+    fi
+    if [ -z "$(env_val GOOGLE_API_KEY)" ]; then
+      read -r -p "Google AI Studio key (Gemini free tier — aistudio.google.com, blank to skip): " v
+      [ -n "$v" ] && set_env_var GOOGLE_API_KEY "$v"
+    fi
   fi
 
-  # Auto-generate secrets
   [ -z "$(env_val OPENCLAW_GATEWAY_TOKEN)" ]    && set_env_var OPENCLAW_GATEWAY_TOKEN "$(rand_hex)"
   [ -z "$(env_val HERMES_DASHBOARD_PASSWORD)" ] && set_env_var HERMES_DASHBOARD_PASSWORD "$(rand_hex)"
 
@@ -128,9 +133,29 @@ seed_config() {
   esac
 }
 
-# Inject Telegram group ids from TELEGRAM_GROUP_ALLOWED_CHATS (.env) into the
-# OpenClaw config allowlist. Idempotent; skips ids already present. Hermes
-# reads the same env var directly, so it needs no config rewrite.
+# The gateway reads provider keys (OPENROUTER/GOOGLE) from the compose process
+# env; the skill sandbox reads $HERMES_HOME/.env with process-env secrets
+# scrubbed — so mirror only skill-consumed secrets (GITHUB_TOKEN) into that file.
+propagate_hermes_secrets() {
+  [ "$PLATFORM" = hermes ] || return 0
+  local dst=data/hermes/.env key val wrote="" i=0
+  # First deploy: the gateway writes this file a moment after start.
+  while [ ! -f "$dst" ] && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
+  [ -f "$dst" ] || { touch "$dst"; chmod 600 "$dst"; }
+  for key in GITHUB_TOKEN; do
+    val="$(env_val "$key")"
+    [ -n "$val" ] || continue
+    if grep -q "^${key}=" "$dst"; then
+      sed -i.bak "s|^${key}=.*|${key}=${val}|" "$dst" && rm -f "$dst.bak"
+    else
+      printf '%s=%s\n' "$key" "$val" >> "$dst"
+    fi
+    wrote="$wrote $key"
+  done
+  [ -n "$wrote" ] && say "Mirrored to data/hermes/.env for skills:$wrote (run /reload in chat to load into the live tool env)"
+}
+
+# Inject TELEGRAM_GROUP_ALLOWED_CHATS into OpenClaw's group allowlist (idempotent).
 sync_openclaw_groups() {
   local f="${LONA_TARGET:-data/openclaw/openclaw.json}" ids id
   ids="$(env_val TELEGRAM_GROUP_ALLOWED_CHATS | tr -d ' ')"
@@ -154,10 +179,8 @@ sync_openclaw_groups() {
   done
 }
 
-# Inject Telegram user ids from TELEGRAM_ALLOWED_USERS (.env) into the
-# OpenClaw DM allowlist and make the first id the command owner. When at
-# least one id is set, DM policy switches from pairing to allowlist — the
-# upstream-recommended one-owner setup. Idempotent.
+# Inject TELEGRAM_ALLOWED_USERS into OpenClaw's DM allowlist + owner, and flip
+# dmPolicy pairing→allowlist. Idempotent.
 sync_openclaw_users() {
   local f="${LONA_TARGET:-data/openclaw/openclaw.json}" ids id first=""
   ids="$(env_val TELEGRAM_ALLOWED_USERS | tr -d ' ')"
@@ -200,20 +223,16 @@ sync_openclaw_users() {
 
 dc() { docker compose --profile "$PLATFORM" "$@"; }
 
-# Is this platform's container currently running?
 is_running() { [ "$(docker inspect -f '{{.State.Running}}' "lona-$PLATFORM" 2>/dev/null)" = "true" ]; }
 
-# Zero-cost chain check after every deploy [free-model ids rotate]: listing
-# tier only, never blocks the deploy. Full check: ./deploy.sh <p> doctor
+# Model-chain listing check (free ids rotate); warns, never blocks the deploy.
 doctor_quick() {
   if ! scripts/doctor.sh "$PLATFORM" --quick; then
     warn "Model chain degraded — run: ./deploy.sh $PLATFORM doctor"
   fi
 }
 
-# Post-deploy hardening: OpenClaw's built-in audit tightens file permissions
-# and flips risky open policies to allowlists. Non-fatal — findings that need
-# a human are printed for review.
+# OpenClaw's built-in audit tightens perms + flips risky policies. Non-fatal.
 audit_openclaw() {
   [ "$PLATFORM" = openclaw ] || return 0
   say "Running OpenClaw security audit"
@@ -268,6 +287,7 @@ case "$ACTION" in
     say "Pulling image + starting $PLATFORM"
     dc pull
     dc up -d
+    propagate_hermes_secrets
     doctor_quick
     audit_openclaw
     next_steps
@@ -295,18 +315,9 @@ case "$ACTION" in
     dc restart
     ;;
   sync)
-    # Push the repo template into the live config without hand-editing.
-    #   Hermes:   deep-merge (template wins on shared keys) so live-only
-    #             runtime keys — home_channel, onboarding, _config_version —
-    #             survive. Applies on restart (config re-read at process start).
-    #   OpenClaw: regenerate live from template + re-inject the .env-derived
-    #             allowlists (the marker model `up` already uses). The running
-    #             gateway HOT-RELOADS the file (hybrid) — no restart. NOTE this
-    #             regenerates from template + .env, so runtime-only pairing
-    #             approvals not in .env are dropped; keep TELEGRAM_ALLOWED_USERS
-    #             in .env as the source of truth.
-    # The live config is machine-managed, so comments are not preserved there;
-    # keep human notes in the repo template. Backs up the live config first.
+    # Template → live, backed up first. Hermes deep-merges (keeps live-only
+    # runtime keys like home_channel); OpenClaw regenerates + re-injects .env
+    # allowlists (drops runtime-only pairing approvals — keep them in .env).
     case "$PLATFORM" in
       hermes)   live_f=data/hermes/config.yaml ;;
       openclaw) live_f=data/openclaw/openclaw.json ;;
@@ -341,6 +352,7 @@ os.replace(tmp, os.environ['LIVE'])
 print('   template keys applied:', ', '.join(sorted(tmpl)))
 print('   live-only keys preserved:', ', '.join(live_only) or '(none)')
 PY
+        propagate_hermes_secrets
         if is_running; then
           say "Applying merged config (restarting hermes)"
           dc restart
@@ -352,11 +364,7 @@ PY
       openclaw)
         f=data/openclaw/openclaw.json
         [ "$had_live" = 1 ] && { cp "$f" "backups/openclaw-config-$ts.json"; say "Backed up live config → backups/openclaw-config-$ts.json"; }
-        # Build the new config in a staging file, inject the .env allowlists
-        # into IT, validate, then swap atomically — the live config is never
-        # touched until the result is known-good. (Regenerating from template +
-        # .env drops runtime-only pairing approvals; keep the allowlist in .env
-        # as the source of truth.)
+        # Stage → inject → validate → atomic swap: live is untouched until good.
         stg="$f.stg.$$"
         cp config/openclaw/openclaw.json "$stg"
         LONA_TARGET="$stg" sync_openclaw_users
