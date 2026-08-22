@@ -76,7 +76,8 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 | `down` / `restart` | Stop / restart |
 | `logs` | Follow container logs |
 | `status` | Container status |
-| `config` | Edit the platform config in `$EDITOR`, apply on save |
+| `config` | Edit the **live** config (`data/<platform>/…`) in `$EDITOR`, apply on save |
+| `sync` | Push the repo **template** (`config/<platform>/…`) into the live config without hand-editing: deep-merges over live runtime keys (Hermes) or regenerates from template + `.env` allowlists (OpenClaw), backs up, then applies (Hermes restart · OpenClaw hot-reload) |
 | `update` | Transactional update: back up, pull, recreate, canary, auto-rollback on failure (see [Safe updates](#safe-updates)) |
 | `backup` | Archive `./data/<platform>` into `./backups/` |
 | `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |
@@ -166,7 +167,7 @@ in `.env`.
 
 | Task | How |
 |---|---|
-| Change model, channels, skills | `./deploy.sh <platform> config` |
+| Change model, channels, skills | Edit the repo template `config/<platform>/…`, then `./deploy.sh <platform> sync` (template → live, keeps runtime keys, backs up + applies). Or `./deploy.sh <platform> config` to hand-edit the live file directly |
 | Change secrets or ports (`.env`) | edit `.env`, then `./deploy.sh <platform> up` (recreate — `restart` won't pick up env) |
 | Upgrade platform version | `./deploy.sh <platform> update` — transactional (backup → canary → auto-rollback, see [Safe updates](#safe-updates)); **run this regularly** or `update install` to schedule it: OpenClaw shipped a critical pairing privilege-escalation fix in 2026.3.28 ([CVE-2026-33579](https://nvd.nist.gov/vuln/detail/CVE-2026-33579)); staying current is the security baseline |
 | Security check (OpenClaw) | runs automatically on `up`/`update`; manual: `./deploy.sh openclaw cli security audit --deep` |

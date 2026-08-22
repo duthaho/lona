@@ -1,21 +1,13 @@
 # Hermes Agent config — seeded to data/hermes/config.yaml on first deploy.
 # Edit that copy or run: ./deploy.sh hermes config
-# Reference: cli-config.yaml.example at https://github.com/NousResearch/hermes-agent
-
-# NOTE for macOS/NFS/SMB hosts: the ./data/hermes bind mount is not
-# WAL-crash-safe through virtiofs — set journal_mode to "delete" there.
-# Linux ext4 (the normal VPS case) is fine with the default.
-# database:
-#   journal_mode: "delete"
 
 model:
   provider: openrouter
-  # Model choice rationale: see README "Free tier".
-  # Gemini alternative: provider: gemini + default: gemini-3.6-flash
-  # (requires GOOGLE_API_KEY). Subscriptions: docs/subscriptions.md.
-  default: nvidia/nemotron-3-ultra-550b-a55b:free
+  default: nvidia/nemotron-3-ultra-550b-a55b:free   # free; Gemini alt: provider: gemini + gemini-3.6-flash
 
-# Automatic failover on rate limits (429), overload, or provider errors.
+# Failover on 429 / overload. Free by default ($0). If you have OpenRouter
+# credit, a cheap paid model here keeps the bot alive when the free daily cap
+# (50/day, 1,000 after a $10 top-up) is hit — e.g. model: openai/gpt-oss-120b
 fallback_model:
   provider: openrouter
   model: nvidia/nemotron-3-super-120b-a12b:free
@@ -24,87 +16,61 @@ terminal:
   backend: local
 
 agent:
-  # Cap tool-calling iterations per turn (upstream default: 500). A messaging
-  # assistant rarely needs more than ~100, and every wasted iteration burns
-  # the shared free-tier daily quota. Raise for heavy coding sessions.
-  max_turns: 100
-  # Fast failover: with a fallback chain configured, don't retry a flaky
-  # primary 3x before switching (upstream recommendation).
-  api_max_retries: 1
+  max_turns: 100        # cap tool iterations/turn (default 500); saves free quota
+  api_max_retries: 1    # fail over fast instead of retrying a flaky primary
 
-# Stop runaway tool loops instead of just warning — weak/free models loop
-# more, and loops burn the free-tier quota.
+# Hard-stop runaway tool loops (weak models loop more, loops burn quota).
 tool_loop_guardrails:
   warnings_enabled: true
   hard_stop_enabled: true
 
+# Deterministic (no-LLM) prune of stale tool output + compact idle threads.
 compression:
-  # Lona's default primary has a 1M-token context, so the ratio-based
-  # compression threshold rarely fires and bulky tool outputs get re-billed
-  # every turn. This enables the deterministic, no-LLM prune of stale tool
-  # results (upstream's suggested value).
   proactive_prune_tokens: 48000
-  # Compact a thread that resumes after 30+ min idle, before the first
-  # reply — long-lived Telegram chats stop re-reading stale context.
   idle_compact_after_seconds: 1800
-  # Cleanest setup for long-running messaging sessions (upstream's advice):
-  # protect only the system prompt + rolling summary + recent tail.
   protect_first_n: 0
 
-# Only relevant after switching to Claude (docs/subscriptions.md):
-# prompt_caching:
-#   cache_ttl: "1h"   # longer Anthropic cache TTL for chats with pauses
-
-# Keep background tasks (compression, summaries) on free models, and cap
-# their concurrency — retry bursts during provider congestion are what
-# trigger OpenRouter's free-tier 429 cascades.
+# Background tasks (summaries, titles) stay on free models with low concurrency.
 auxiliary:
   free_only: true
   openrouter_model: nvidia/nemotron-3-nano-30b-a3b:free
   compression:
     max_concurrency: 2
-    reasoning_effort: "low"   # summaries don't need deep thinking
+    reasoning_effort: "low"
   title_generation:
     max_concurrency: 2
   session_search:
     max_concurrency: 2
 
-# Sessions never auto-reset by default; memory survives resets either way.
-# Opt in to cap the per-message cost of long-lived chats:
-# session_reset:
-#   mode: both          # "idle", "daily", or "both"
-#   idle_minutes: 1440
-#   at_hour: 4
+# Tool groups the model may call (`hermes tools list`). Balanced set: keep
+# terminal (most skills need it), drop browser/desktop/image-video. Applies on /reset.
+platform_toolsets:
+  telegram: [web, vision, file, terminal, skills, memory, session_search, todo, cronjob, clarify, messaging]
+  # Stricter, no-shell (breaks terminal-backed skills): [web, vision, file, skills, memory, session_search, todo, clarify, messaging]
 
-# Hardened variant: free models are easier to prompt-inject than frontier
-# ones, so consider dropping raw terminal/browser access on chat surfaces
-# (default Telegram preset includes both). Uncomment to apply:
-# platform_toolsets:
-#   telegram: [web, vision, file, skills, todo, cronjob, messaging]
+# Remember prefs/projects across chats; auto-save (single-owner bot).
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  write_approval: false
 
-# OpenRouter provider routing: prefer the fastest host for each model.
-# Free models cost $0 either way, so throughput beats the default price sort.
+# Self-improving skills: agent saves its own SKILL.md and reloads them later.
+# Only touches agent-created skills, never deletes (archive + backup). Free sweep.
+curator:
+  enabled: true
+  consolidate: false      # keep the aux-model consolidation pass off (costs tokens)
+  stale_after_days: 45
+  archive_after_days: 120
+  backup:
+    enabled: true
+
 provider_routing:
-  sort: "throughput"
-
-# Voice memo transcription (Telegram voice → text). Local whisper is
-# auto-installed on first use (CPU; ~1 GB RAM while active). For faster
-# transcripts set GROQ_API_KEY in .env and switch provider to "groq".
-# stt:
-#   enabled: true
-#   provider: "local"
-#   local:
-#     model: "base"
-#     unload_after_idle_seconds: 300
+  sort: "throughput"      # free models are $0 either way; pick the fastest host
 
 platforms:
   telegram:
     extra:
-      # In groups, reply only to @mentions, replies to the bot, or commands.
-      # DMs are never gated.
-      require_mention: true
+      require_mention: true   # groups: reply only to @mentions/replies/commands (DMs always answered)
 
-# Progressive message edits while the bot streams its reply on
-# Telegram/Discord/Slack. Off upstream; nice UX — enable if you like it.
-# streaming:
-#   enabled: true
+streaming:
+  enabled: true           # progressive message edits while replying

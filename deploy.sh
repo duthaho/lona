@@ -3,7 +3,7 @@
 #
 #   ./deploy.sh openclaw            # deploy OpenClaw (default action: up)
 #   ./deploy.sh hermes              # deploy Hermes Agent
-#   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|backup|doctor|cli
+#   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|sync|backup|doctor|cli
 #
 # Examples:
 #   ./deploy.sh openclaw logs
@@ -132,7 +132,7 @@ seed_config() {
 # OpenClaw config allowlist. Idempotent; skips ids already present. Hermes
 # reads the same env var directly, so it needs no config rewrite.
 sync_openclaw_groups() {
-  local f=data/openclaw/openclaw.json ids id
+  local f="${LONA_TARGET:-data/openclaw/openclaw.json}" ids id
   ids="$(env_val TELEGRAM_GROUP_ALLOWED_CHATS | tr -d ' ')"
   [ -n "$ids" ] && [ -f "$f" ] || return 0
   if ! grep -q '__LONA_GROUPS__' "$f"; then
@@ -159,7 +159,7 @@ sync_openclaw_groups() {
 # least one id is set, DM policy switches from pairing to allowlist — the
 # upstream-recommended one-owner setup. Idempotent.
 sync_openclaw_users() {
-  local f=data/openclaw/openclaw.json ids id first=""
+  local f="${LONA_TARGET:-data/openclaw/openclaw.json}" ids id first=""
   ids="$(env_val TELEGRAM_ALLOWED_USERS | tr -d ' ')"
   [ -n "$ids" ] && [ -f "$f" ] || return 0
   if ! grep -q '__LONA_ALLOWFROM__' "$f"; then
@@ -199,6 +199,9 @@ sync_openclaw_users() {
 }
 
 dc() { docker compose --profile "$PLATFORM" "$@"; }
+
+# Is this platform's container currently running?
+is_running() { [ "$(docker inspect -f '{{.State.Running}}' "lona-$PLATFORM" 2>/dev/null)" = "true" ]; }
 
 # Zero-cost chain check after every deploy [free-model ids rotate]: listing
 # tier only, never blocks the deploy. Full check: ./deploy.sh <p> doctor
@@ -290,6 +293,88 @@ case "$ACTION" in
     "${EDITOR:-nano}" "$f"
     say "Applying config (restarting $PLATFORM)"
     dc restart
+    ;;
+  sync)
+    # Push the repo template into the live config without hand-editing.
+    #   Hermes:   deep-merge (template wins on shared keys) so live-only
+    #             runtime keys — home_channel, onboarding, _config_version —
+    #             survive. Applies on restart (config re-read at process start).
+    #   OpenClaw: regenerate live from template + re-inject the .env-derived
+    #             allowlists (the marker model `up` already uses). The running
+    #             gateway HOT-RELOADS the file (hybrid) — no restart. NOTE this
+    #             regenerates from template + .env, so runtime-only pairing
+    #             approvals not in .env are dropped; keep TELEGRAM_ALLOWED_USERS
+    #             in .env as the source of truth.
+    # The live config is machine-managed, so comments are not preserved there;
+    # keep human notes in the repo template. Backs up the live config first.
+    case "$PLATFORM" in
+      hermes)   live_f=data/hermes/config.yaml ;;
+      openclaw) live_f=data/openclaw/openclaw.json ;;
+    esac
+    had_live=0; [ -f "$live_f" ] && had_live=1
+    seed_config
+    mkdir -p backups
+    ts="$(date +%Y%m%d-%H%M%S)"
+    case "$PLATFORM" in
+      hermes)
+        command -v python3 >/dev/null 2>&1 || die "sync needs python3 (with PyYAML) on the host."
+        f=data/hermes/config.yaml
+        cp "$f" "backups/hermes-config-$ts.yaml"
+        say "Backed up live config → backups/hermes-config-$ts.yaml"
+        TEMPLATE=config/hermes/config.yaml LIVE="$f" python3 - <<'PY' || die "Merge failed — live config left unchanged."
+import os, yaml
+tmpl = yaml.safe_load(open(os.environ['TEMPLATE'])) or {}
+live = yaml.safe_load(open(os.environ['LIVE'])) or {}
+def merge(base, over):
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            merge(base[k], v)
+        else:
+            base[k] = v
+    return base
+live_only = sorted(set(live) - set(tmpl))
+merge(live, tmpl)
+tmp = os.environ['LIVE'] + '.tmp'
+with open(tmp, 'w') as fh:
+    yaml.safe_dump(live, fh, sort_keys=False, allow_unicode=True)
+os.replace(tmp, os.environ['LIVE'])
+print('   template keys applied:', ', '.join(sorted(tmpl)))
+print('   live-only keys preserved:', ', '.join(live_only) or '(none)')
+PY
+        if is_running; then
+          say "Applying merged config (restarting hermes)"
+          dc restart
+          say "Sync complete. Session-scoped settings (toolsets) apply on the next /reset."
+        else
+          warn "hermes container not running — config staged. Start it with: ./deploy.sh hermes up"
+        fi
+        ;;
+      openclaw)
+        f=data/openclaw/openclaw.json
+        [ "$had_live" = 1 ] && { cp "$f" "backups/openclaw-config-$ts.json"; say "Backed up live config → backups/openclaw-config-$ts.json"; }
+        # Build the new config in a staging file, inject the .env allowlists
+        # into IT, validate, then swap atomically — the live config is never
+        # touched until the result is known-good. (Regenerating from template +
+        # .env drops runtime-only pairing approvals; keep the allowlist in .env
+        # as the source of truth.)
+        stg="$f.stg.$$"
+        cp config/openclaw/openclaw.json "$stg"
+        LONA_TARGET="$stg" sync_openclaw_users
+        LONA_TARGET="$stg" sync_openclaw_groups
+        if command -v node >/dev/null 2>&1; then
+          npx --yes json5 "$stg" >/dev/null 2>&1 || { rm -f "$stg"; die "sync produced invalid JSON5 — live config left unchanged."; }
+        else
+          warn "node not found — skipping JSON5 pre-check; the gateway validates on reload."
+        fi
+        mv "$stg" "$f"
+        if is_running; then
+          say "Applied template + .env allowlists. OpenClaw hot-reloads (hybrid) — no restart needed."
+          say "Confirm it took effect: ./deploy.sh openclaw cli config get channels.telegram.streaming.mode"
+        else
+          warn "openclaw container not running — config staged. Start it with: ./deploy.sh openclaw up"
+        fi
+        ;;
+    esac
     ;;
   backup)
     mkdir -p backups

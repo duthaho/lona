@@ -1,6 +1,5 @@
 // OpenClaw gateway config (JSON5) — seeded to data/openclaw/openclaw.json on
 // first deploy. Edit that copy (hot-reloads) or run: ./deploy.sh openclaw config
-// Reference: https://docs.openclaw.ai/gateway/configuration
 {
   gateway: {
     mode: "local",
@@ -10,55 +9,58 @@
   },
 
   session: {
-    // Each DM sender gets an isolated session (secure multi-user default).
-    // Solo use? "main" shares one rolling session across your devices instead.
-    dmScope: "per-channel-peer",
-    // Uncomment to cap per-message token cost of long-lived chats
-    // (docs.openclaw.ai/concepts/session):
-    // reset: { mode: "daily", atHour: 4, idleMinutes: 120 },
+    dmScope: "per-channel-peer",   // isolated session per DM sender; "main" = one shared session
   },
 
   agents: {
     defaults: {
+      // Free chain ($0). Have OpenRouter credit? Add a cheap paid model as the
+      // last fallback to survive the free daily cap: "openrouter/openai/gpt-oss-120b".
+      // Subscription alt: primary "google/gemini-3.6-flash" | "anthropic/claude-opus-5" (docs/subscriptions.md).
       model: {
-        // Reliability-first free chain — rationale in README "Free tier".
         primary: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
         fallbacks: [
           "openrouter/z-ai/glm-5.2:free",
           "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
           "openrouter/google/gemma-4-31b-it:free",
         ],
-        // Alternatives (see docs/subscriptions.md for subscription setup):
-        // primary: "google/gemini-3.6-flash",      // Google AI Studio key
-        // primary: "openai/gpt-5.3-codex-spark",   // ChatGPT Plus/Pro
-        // primary: "anthropic/claude-opus-5",      // Claude Pro/Max
       },
-      // Downscale images sent to the model (default 1200). 800 cuts
-      // vision-token burn on the shared free-tier quota.
-      imageMaxDimensionPx: 800,
+      imageMaxDimensionPx: 800,   // downscale images (default 1200) to save vision tokens
+      // Restrict skills with an allowlist (replaces default, not merges): skills: ["github", "notion"],
     },
     entries: {
       main: {
         default: true,
-        // Make requireMention match your bot's @handle in groups.
-        // deploy.sh does not know it — edit after creating the bot.
-        // groupChat: { mentionPatterns: ["@my_bot"] },
+        // groupChat: { mentionPatterns: ["@my_bot"] },   // set to your bot @handle for groups
       },
     },
   },
 
-  // Free models are markedly easier to prompt-inject than frontier ones
-  // (see docs.openclaw.ai/gateway/security), so keep the blast radius small:
-  // no host filesystem outside the workspace, no elevated tools.
+  // Free models are easier to prompt-inject — keep the blast radius small.
   tools: {
     fs: { workspaceOnly: true },
     elevated: { enabled: false },
-    // Stricter tier for group-exposed bots — exec needs your approval:
-    // exec: { security: "allowlist", ask: "on-miss" },
   },
 
-  // Owner of owner-only commands and exec approvals. Populated by deploy.sh
-  // from TELEGRAM_ALLOWED_USERS in .env (first id).
+  // Skills are all-on by default (agents.defaults.skills omitted).
+  // Workshop = self-improving skills; on free models hold captures for manual
+  // approval (review: `openclaw skills`). Set approvalPolicy "auto" on frontier models.
+  skills: {
+    load: { watch: true },
+    workshop: {
+      autonomous: { mode: "auto" },
+      approvalPolicy: "manual",
+      maxPending: 50,
+      maxSkillBytes: 40000,
+    },
+  },
+
+  // Plugins/MCP enabled; nothing installed yet (add via `./deploy.sh openclaw cli plugins add …`).
+  // Harden with allow/deny lists on group-exposed bots.
+  plugins: {
+    enabled: true,
+  },
+
   commands: {
     ownerAllowFrom: [
       // __LONA_OWNER__ (do not remove this marker)
@@ -67,12 +69,11 @@
 
   channels: {
     telegram: {
-      // Bot token comes from TELEGRAM_BOT_TOKEN.
-      // With TELEGRAM_ALLOWED_USERS set in .env, deploy.sh fills allowFrom and
-      // switches dmPolicy to "allowlist" — the recommended one-owner setup.
-      // Without it, DMs fall back to pairing: approve with
+      // Token from TELEGRAM_BOT_TOKEN. With TELEGRAM_ALLOWED_USERS set, deploy.sh
+      // fills allowFrom and switches dmPolicy to "allowlist"; else DMs use pairing:
       //   ./deploy.sh openclaw cli pairing approve telegram <CODE>
       enabled: true,
+      streaming: { mode: "partial" },   // progressive reply edits (off | partial | block | progress)
       dmPolicy: "pairing",
       allowFrom: [
         // Populated by deploy.sh from TELEGRAM_ALLOWED_USERS in .env.
