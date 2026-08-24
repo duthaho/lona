@@ -79,6 +79,7 @@ services:
       context: ./apps/cohub
     container_name: lona-cohub
     restart: unless-stopped
+    user: "${HERMES_UID:-1000}:${HERMES_GID:-1000}"
     env_file: .env
     environment:
       COHUB_API_TOKEN: ${COHUB_API_TOKEN:?run ./deploy.sh to generate}

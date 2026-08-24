@@ -158,6 +158,20 @@ propagate_hermes_secrets() {
   return 0
 }
 
+reconcile_hermes_api_key() {
+  [ "$PLATFORM" = hermes ] || return 0
+  local dst=data/hermes/.env persisted lona i=0
+  while [ ! -f "$dst" ] && [ "$i" -lt 15 ]; do sleep 1; i=$((i + 1)); done
+  persisted="$(grep -E '^API_SERVER_KEY=' "$dst" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+  [ -n "$persisted" ] || return 0
+  lona="$(env_val HERMES_API_SERVER_KEY)"
+  [ "$persisted" = "$lona" ] && return 0
+  set_env_var HERMES_API_SERVER_KEY "$persisted"
+  say "Reconciled HERMES_API_SERVER_KEY with Hermes' persisted key so Cohub authenticates"
+  is_running && dc up -d --no-deps cohub >/dev/null 2>&1 || true
+  return 0
+}
+
 # Inject TELEGRAM_GROUP_ALLOWED_CHATS into OpenClaw's group allowlist (idempotent).
 sync_openclaw_groups() {
   local f="${LONA_TARGET:-data/openclaw/openclaw.json}" ids id
@@ -295,6 +309,7 @@ case "$ACTION" in
     dc pull "$PLATFORM"
     if [ "$PLATFORM" = hermes ]; then dc up -d --build; else dc up -d; fi
     propagate_hermes_secrets
+    reconcile_hermes_api_key
     doctor_quick
     audit_openclaw
     next_steps
