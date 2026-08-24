@@ -82,7 +82,9 @@ Explicit provider/model values are validated together and persisted before any s
 
 Published workflow versions remain immutable. Form editing and JSON import now create records in `workflow_drafts`; each save requires the revision last read by the editor and returns `409 Conflict` instead of overwriting a newer change.
 
-Draft definitions may be temporarily invalid while they are being authored. Operators can save, reopen, validate, duplicate a published version, import/export canonical JSON, and explicitly publish a validated revision. Canvas layout is stored in a separate `layout_json` field so future visual positioning cannot change the executable workflow fingerprint.
+Draft definitions may be temporarily invalid while they are being authored. Operators can save, reopen, validate, duplicate a published version, import/export canonical JSON, and explicitly publish a validated revision. Canvas layout is stored in a separate `layout_json` field so visual positioning cannot change the executable workflow fingerprint.
+
+The form editor includes an `@xyflow/react` canvas with typed task, decision, parallel, human, and end nodes. Operators can drag nodes, connect handles, inspect labeled `next`, decision-route, and parallel-branch edges, and remove a selected node or edge with the keyboard. The minimap and zoom controls remain available on desktop and mobile; all semantic graph changes still pass through the normal draft save and backend validation path.
 
 The draft API is available through `GET/POST /api/workflow-drafts`, `GET/PUT /api/workflow-drafts/{id}`, and the `validate` and `publish` sub-resources. Importing JSON never publishes or runs it automatically. The migration is additive; rolling back the application leaves draft rows intact and older Cohub versions safely ignore the new table.
 
