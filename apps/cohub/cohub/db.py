@@ -250,16 +250,28 @@ class CohubStore:
                 (run_id, task_id, workflow["id"], workflow["name"], workflow["version"], workflow["fingerprint"], "queued", canonical_json(input_data), now, now),
             )
             self._event(connection, run_id, "run.created", {"workflow": workflow["name"], "version": workflow["version"]})
-            row = connection.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+            row = connection.execute(
+                "SELECT r.*, t.title AS title FROM runs r JOIN tasks t ON t.id=r.task_id WHERE r.id=?",
+                (run_id,),
+            ).fetchone()
             return _decode(row, ("input_json",))  # type: ignore[return-value]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
-            return _decode(connection.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone(), ("input_json",))
+            row = connection.execute(
+                "SELECT r.*, t.title AS title FROM runs r JOIN tasks t ON t.id=r.task_id WHERE r.id=?",
+                (run_id,),
+            ).fetchone()
+            return _decode(row, ("input_json",))
 
     def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connection() as connection:
-            rows = connection.execute("SELECT * FROM runs ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = connection.execute(
+                """SELECT r.*, t.title AS title
+                   FROM runs r JOIN tasks t ON t.id=r.task_id
+                   ORDER BY r.updated_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
             return [_decode(row, ("input_json",)) for row in rows]  # type: ignore[misc]
 
     def get_run_workflow(self, run_id: str) -> dict[str, Any]:

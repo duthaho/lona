@@ -44,11 +44,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/cohub/package-lock.json
+      - name: Build and test Cohub dashboard
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Install browser for dashboard smoke tests
+        if: matrix.python-version == '3.13'
+        run: npx playwright install --with-deps chromium
+      - name: Run responsive dashboard smoke tests
+        if: matrix.python-version == '3.13'
+        run: npm run test:e2e
       - name: Run Cohub tests
         run: python -W error::ResourceWarning -m unittest discover -s tests -v
       - name: Validate sources
-        run: |
-          python -m py_compile cohub/*.py
-          node --check cohub/static/app.js
+        run: python -m py_compile cohub/*.py
       - name: Exercise restart-safe demo
         run: python -m cohub --data-dir /tmp/cohub-ci demo --approve

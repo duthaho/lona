@@ -167,11 +167,34 @@ See [`examples/personal-daily-briefing.json`](examples/personal-daily-briefing.j
 ## Verification
 
 ```bash
+npm ci
+npm test
+npm run build
+npx playwright install chromium
+npm run test:e2e
 python3 -W error::ResourceWarning -m unittest discover -s tests -v
 python3 -m py_compile cohub/*.py
-node --check cohub/static/app.js
 python3 -m cohub --data-dir /tmp/cohub-demo demo --approve
 ```
+
+## Dashboard development
+
+The operator dashboard is a React and TypeScript application built with Vite.
+Source files live in `frontend/`; the reproducible production bundle is written
+to `cohub/static/` and is served by Cohub's standard-library HTTP server. The
+production container uses a Node build stage, then copies only the static bundle
+into the final Python image, so Node is not present at runtime.
+
+```bash
+npm install
+npm run dev     # Vite development server
+npm run build   # Type-check and create the production bundle
+npm run test:e2e # Desktop and mobile Chromium smoke tests
+```
+
+The dashboard remains local-first: it loads no remote fonts, scripts, analytics,
+or other third-party browser resources. API authorization and all workflow and
+approval invariants remain server-side.
 
 ## Project documents
 

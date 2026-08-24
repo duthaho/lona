@@ -1,4 +1,5 @@
 import json
+import re
 import tempfile
 import threading
 import unittest
@@ -43,7 +44,7 @@ class ApiTests(unittest.TestCase):
         self.addCleanup(self.server.shutdown)
         self.base = f"http://127.0.0.1:{self.server.server_port}"
 
-    def request(self, method, path, body=None, token="test-token"):
+    def request(self, method, path, body=None, token: str | None = "test-token"):
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Accept": "application/json"}
         if data is not None:
@@ -71,11 +72,13 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(workflow["version"], 1)
         status, run = self.request("POST", "/api/runs", {"workflow": "api-demo", "title": "API demo", "input": {}})
         self.assertEqual(status, 201)
+        self.assertEqual(run["title"], "API demo")
         run_id = run["id"]
         status, tick = self.request("POST", f"/api/runs/{run_id}/tick", {})
         self.assertEqual(status, 200)
         self.assertTrue(tick["worked"])
         status, detail = self.request("GET", f"/api/runs/{run_id}")
+        self.assertEqual(detail["title"], "API demo")
         self.assertEqual(detail["status"], "waiting_for_human")
         approval = detail["approvals"][0]
         status, _ = self.request("POST", f"/api/approvals/{approval['id']}/approve", {"payload_hash": approval["payload_hash"]})
@@ -93,7 +96,13 @@ class ApiTests(unittest.TestCase):
         status, html = self.request("GET", "/", token=None)
         self.assertEqual(status, 200)
         self.assertIn("Cohub", html)
-        self.assertIn("workflowGraph", html)
+        self.assertIn('id="root"', html)
+        asset = re.search(r'<script[^>]+src="([^"]+\.js)"', html)
+        if asset is None:
+            self.fail("dashboard must include a bundled JavaScript asset")
+        status, javascript = self.request("GET", asset.group(1), token=None)
+        self.assertEqual(status, 200)
+        self.assertIn("Personal coworker", javascript)
         self.assertEqual(overview["counts"]["running"], 1)
 
     def test_rejects_invalid_json_and_unknown_route(self):

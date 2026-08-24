@@ -9,3 +9,6 @@ artifacts/
 .git/
 .github/
 .hermes/
+node_modules/
+playwright-report/
+test-results/

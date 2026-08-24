@@ -98,4 +98,21 @@ is accepted only after status confirms that the run is no longer waiting.
 
 ## Dashboard boundary
 
-The dashboard is a static responsive application served by the standard-library API. It does not contain business invariants. API authentication, workflow validation, approval hash checks, and state transitions are enforced server-side.
+The dashboard is a React and TypeScript application compiled by Vite into static
+assets served by the standard-library API. Node is a build-time dependency only;
+the production image and Python package contain the generated assets, not a Node
+server. The browser loads no third-party resources, preserving local-first and
+Content Security Policy guarantees.
+
+The interface is organized around operator decisions rather than storage tables:
+
+- Overview prioritizes pending approvals and active runs.
+- Runs support search and status filters and open in a contextual inspector.
+- The run inspector owns step progress, Hermes execution state, and artifacts.
+- Approval review presents intent and Hermes-redacted command data first; raw
+  payload and SHA-256 details remain available behind progressive disclosure.
+- Workflow selection and graph inspection share one workspace.
+
+The frontend does not contain business invariants. API authentication, workflow
+validation, approval hash checks, redaction, and state transitions are enforced
+server-side.

@@ -12,3 +12,6 @@ build/
 data/
 .env
 .DS_Store
+node_modules/
+playwright-report/
+test-results/
