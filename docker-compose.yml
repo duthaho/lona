@@ -59,11 +59,48 @@ services:
       HERMES_DASHBOARD_HOST: 0.0.0.0
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_USER:-admin}
       HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:?run ./deploy.sh to generate}
+      # Internal Runs API for Cohub. Port 8642 stays on the Compose network.
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_KEY: ${HERMES_API_SERVER_KEY:?run ./deploy.sh to generate}
     volumes:
       # All Hermes state: config.yaml, .env, memories, skills, sessions, cron
       - ./data/hermes:/opt/data
     ports:
       - "${HERMES_DASHBOARD_BIND:-127.0.0.1}:9119:9119"
+
+  # ----------------------------------------------------------
+  # Cohub personal-coworker control plane for Hermes
+  # Dashboard is loopback-only by default; Hermes API stays internal.
+  # ----------------------------------------------------------
+  cohub:
+    profiles: ["hermes"]
+    build:
+      context: ./apps/cohub
+    container_name: lona-cohub
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      COHUB_API_TOKEN: ${COHUB_API_TOKEN:?run ./deploy.sh to generate}
+      HERMES_API_BASE: http://hermes:8642
+      HERMES_API_KEY: ${HERMES_API_SERVER_KEY:?run ./deploy.sh to generate}
+    command: ["--data-dir", "/data", "serve", "--host", "0.0.0.0", "--port", "8765", "--executor", "hermes"]
+    volumes:
+      - ./data/cohub:/data
+    ports:
+      - "${COHUB_BIND:-127.0.0.1}:${COHUB_PORT:-8765}:8765"
+    depends_on:
+      - hermes
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8765/api/health',headers={'Authorization':'Bearer '+os.environ['COHUB_API_TOKEN']}); raise SystemExit(0 if urllib.request.urlopen(r,timeout=5).status==200 else 1)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
 # Some hosts (jumbo-frame NICs, tunnelled/overlay egress) have a reduced path
 # MTU to Telegram's data centers with ICMP "frag needed" filtered — a PMTUD

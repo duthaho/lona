@@ -108,6 +108,8 @@ ensure_env() {
 
   [ -z "$(env_val OPENCLAW_GATEWAY_TOKEN)" ]    && set_env_var OPENCLAW_GATEWAY_TOKEN "$(rand_hex)"
   [ -z "$(env_val HERMES_DASHBOARD_PASSWORD)" ] && set_env_var HERMES_DASHBOARD_PASSWORD "$(rand_hex)"
+  [ -z "$(env_val HERMES_API_SERVER_KEY)" ]     && set_env_var HERMES_API_SERVER_KEY "$(rand_hex)"
+  [ -z "$(env_val COHUB_API_TOKEN)" ]           && set_env_var COHUB_API_TOKEN "$(rand_hex)"
 
   [ -n "$(env_val OPENROUTER_API_KEY)" ] || die "OPENROUTER_API_KEY is empty — edit .env and re-run."
 }
@@ -122,7 +124,7 @@ seed_config() {
       fi
       ;;
     hermes)
-      mkdir -p data/hermes
+      mkdir -p data/hermes data/cohub
       if [ ! -f data/hermes/config.yaml ]; then
         say "Seeding data/hermes/config.yaml"
         cp config/hermes/config.yaml data/hermes/config.yaml
@@ -153,6 +155,7 @@ propagate_hermes_secrets() {
     wrote="$wrote $key"
   done
   [ -n "$wrote" ] && say "Mirrored to data/hermes/.env for skills:$wrote (run /reload in chat to load into the live tool env)"
+  return 0
 }
 
 # Inject TELEGRAM_GROUP_ALLOWED_CHATS into OpenClaw's group allowlist (idempotent).
@@ -266,6 +269,8 @@ next_steps() {
       echo "  • Logs:      ./deploy.sh hermes logs"
       echo "  • Dashboard: ssh -L 9119:127.0.0.1:9119 <user>@<vps>  →  http://127.0.0.1:9119"
       echo "               (user/pass: HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env)"
+      echo "  • Cohub:     ssh -L 8765:127.0.0.1:8765 <user>@<vps>  →  http://127.0.0.1:8765"
+      echo "               (token: COHUB_API_TOKEN in .env)"
       if [ -n "$(env_val TELEGRAM_BOT_TOKEN)" ]; then
         echo "  • Telegram:  DM your bot — only IDs in TELEGRAM_ALLOWED_USERS are accepted."
         echo "  • Groups:    add bot to group → copy chat id from logs →"
@@ -285,8 +290,10 @@ case "$ACTION" in
       sync_openclaw_groups
     fi
     say "Pulling image + starting $PLATFORM"
-    dc pull
-    dc up -d
+    # Pull only the gateway image; Cohub is build-only (no image to pull) and
+    # is (re)built by the --build flag below on the hermes profile.
+    dc pull "$PLATFORM"
+    if [ "$PLATFORM" = hermes ]; then dc up -d --build; else dc up -d; fi
     propagate_hermes_secrets
     doctor_quick
     audit_openclaw
@@ -387,11 +394,13 @@ PY
   backup)
     mkdir -p backups
     f="backups/${PLATFORM}-$(date +%Y%m%d-%H%M%S).tar.gz"
-    say "Backing up data/$PLATFORM → $f"
+    paths=("data/$PLATFORM")
+    [ "$PLATFORM" = hermes ] && [ -d data/cohub ] && paths+=("data/cohub")
+    say "Backing up ${paths[*]} → $f"
     # Exit 1 = "file changed as we read it" — expected while the gateway is
     # live (SQLite WAL churn); the archive is still usable. Exit ≥2 is fatal.
     rc=0
-    tar czf "$f" --warning=no-file-changed "data/$PLATFORM" || rc=$?
+    tar czf "$f" --warning=no-file-changed "${paths[@]}" || rc=$?
     [ "$rc" -le 1 ] || die "Backup failed (tar exit $rc)"
     say "Backup written: $f"
     ;;

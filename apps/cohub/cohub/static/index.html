@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b0d12">
+  <title>Cohub · Personal Coworker</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#today" aria-label="Cohub home"><span class="brand-mark">C</span><span>Cohub</span></a>
+    <nav aria-label="Primary navigation">
+      <button class="nav-item active" data-view="today"><span>⌂</span>Today</button>
+      <button class="nav-item" data-view="tasks"><span>✓</span>Tasks</button>
+      <button class="nav-item" data-view="runs"><span>◉</span>Runs</button>
+      <button class="nav-item" data-view="workflows"><span>◇</span>Workflows</button>
+      <button class="nav-item" data-view="approvals"><span>!</span>Approvals <b id="approval-badge">0</b></button>
+      <button class="nav-item" data-view="artifacts"><span>□</span>Artifacts</button>
+    </nav>
+    <div class="system-state"><i></i><span>Local control plane</span></div>
+  </aside>
+
+  <main>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">PERSONAL COWORKER</p>
+        <h1 id="page-title">Today</h1>
+      </div>
+      <div class="actions">
+        <button class="button ghost" id="token-button">API token</button>
+        <button class="button primary" id="new-run-button">New run</button>
+      </div>
+    </header>
+
+    <section id="view-today" class="view active">
+      <div class="hero">
+        <div><p class="eyebrow">COMMAND CENTER</p><h2>Good day, Duthaho.</h2><p>See what your coworker is doing, what needs judgment, and what was delivered.</p></div>
+        <button class="button primary" data-open-run>Delegate a goal</button>
+      </div>
+      <div id="metrics" class="metrics"></div>
+      <div class="two-column">
+        <article class="panel"><div class="panel-head"><h3>Needs your attention</h3><button class="text-button" data-go="approvals">View all</button></div><div id="today-approvals"></div></article>
+        <article class="panel"><div class="panel-head"><h3>Recent runs</h3><button class="text-button" data-go="runs">View all</button></div><div id="today-runs"></div></article>
+      </div>
+    </section>
+
+    <section id="view-tasks" class="view"><article class="panel"><div class="panel-head"><div><p class="eyebrow">GOALS</p><h3>Tasks</h3></div></div><div id="tasks-list"></div></article></section>
+    <section id="view-runs" class="view"><article class="panel"><div class="panel-head"><div><p class="eyebrow">EXECUTION</p><h3>Runs</h3></div></div><div id="runs-list"></div></article><article id="run-detail" class="panel detail hidden"></article></section>
+    <section id="view-workflows" class="view"><div class="split-heading"><div><p class="eyebrow">DETERMINISTIC AUTOMATION</p><h2>Workflows</h2><p>Published definitions are immutable. Every run is pinned to an exact fingerprint.</p></div><button class="button primary" id="publish-workflow-button">Publish JSON</button></div><div id="workflows-grid" class="card-grid"></div><article class="panel workflow-visual"><div class="panel-head"><div><p class="eyebrow">GRAPH VIEW</p><h3 id="workflowGraphTitle">Select a workflow</h3></div></div><div id="workflowGraph" class="workflow-graph"></div></article></section>
+    <section id="view-approvals" class="view"><div class="split-heading"><div><p class="eyebrow">HUMAN IN THE LOOP</p><h2>Approvals</h2><p>Review the exact payload hash before any protected action proceeds.</p></div></div><div id="approvals-list" class="approval-grid"></div></section>
+    <section id="view-artifacts" class="view"><article class="panel"><div class="panel-head"><div><p class="eyebrow">DELIVERABLES</p><h3>Artifacts</h3></div></div><div id="artifacts-list" class="empty-state">Open a run to inspect its verified artifacts.</div></article></section>
+  </main>
+
+  <dialog id="run-dialog">
+    <form method="dialog" id="run-form">
+      <div class="dialog-head"><div><p class="eyebrow">NEW RUN</p><h2>Delegate a workflow</h2></div><button value="cancel" class="icon-button" aria-label="Close">×</button></div>
+      <label>Workflow<select id="run-workflow" required></select></label>
+      <label>Task title<input id="run-title" placeholder="e.g. Prepare the daily briefing"></label>
+      <label>Input JSON<textarea id="run-input" rows="7">{}</textarea></label>
+      <p id="run-error" class="error"></p>
+      <div class="dialog-actions"><button value="cancel" class="button ghost">Cancel</button><button type="submit" value="default" class="button primary">Start run</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="workflow-dialog">
+    <form method="dialog" id="workflow-form">
+      <div class="dialog-head"><div><p class="eyebrow">PUBLISH</p><h2>Workflow definition</h2></div><button value="cancel" class="icon-button" aria-label="Close">×</button></div>
+      <textarea id="workflow-json" rows="20" spellcheck="false"></textarea>
+      <p id="workflow-error" class="error"></p>
+      <div class="dialog-actions"><button value="cancel" class="button ghost">Cancel</button><button type="submit" value="default" class="button primary">Validate & publish</button></div>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

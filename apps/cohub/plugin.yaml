@@ -1,0 +1,13 @@
+name: cohub
+kind: standalone
+version: 0.1.0
+description: Personal coworker dashboard and deterministic workflow engine
+license: MIT
+homepage: https://github.com/duthaho/cohub
+tags: [workflow, dashboard, automation, approvals]
+provides_tools:
+  - cohub_publish_workflow
+  - cohub_start_run
+  - cohub_run_status
+  - cohub_tick_run
+  - cohub_resolve_approval
