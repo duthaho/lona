@@ -29,5 +29,8 @@ cohub = "cohub.hermes_plugin:register"
 [tool.setuptools]
 include-package-data = true
 
+[tool.setuptools.packages.find]
+include = ["cohub*"]
+
 [tool.setuptools.package-data]
-cohub = ["static/*", "examples/*.json"]
+cohub = ["static/*", "static/assets/*", "examples/*.json"]
