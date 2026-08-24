@@ -13,6 +13,10 @@ from typing import Any, Iterator
 from .schemas import canonical_json, fingerprint_workflow, validate_workflow
 
 
+class DraftConflictError(RuntimeError):
+    """Raised when a workflow draft revision or lifecycle state is stale."""
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="milliseconds")
 
@@ -47,6 +51,21 @@ CREATE TABLE IF NOT EXISTS workflow_versions (
     UNIQUE(name, version)
 );
 CREATE INDEX IF NOT EXISTS workflow_name_version ON workflow_versions(name, version DESC);
+
+CREATE TABLE IF NOT EXISTS workflow_drafts (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    definition_json TEXT NOT NULL,
+    layout_json TEXT NOT NULL,
+    source_workflow_id TEXT REFERENCES workflow_versions(id),
+    published_workflow_id TEXT REFERENCES workflow_versions(id),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    published_at TEXT
+);
+CREATE INDEX IF NOT EXISTS workflow_drafts_status ON workflow_drafts(status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -217,24 +236,28 @@ class CohubStore:
         )
         return seq
 
-    def publish_workflow(self, workflow: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _publish_workflow(connection: sqlite3.Connection, workflow: dict[str, Any]) -> dict[str, Any]:
         normalized = validate_workflow(workflow)
         fingerprint = fingerprint_workflow(normalized)
+        existing = connection.execute("SELECT * FROM workflow_versions WHERE fingerprint=?", (fingerprint,)).fetchone()
+        if existing:
+            return _decode(existing, ("definition_json",))  # type: ignore[return-value]
+        row = connection.execute(
+            "SELECT COALESCE(MAX(version),0)+1 AS version FROM workflow_versions WHERE name=?",
+            (normalized["name"],),
+        ).fetchone()
+        workflow_id = _id("wf")
+        connection.execute(
+            "INSERT INTO workflow_versions(id,name,version,fingerprint,definition_json,created_at) VALUES(?,?,?,?,?,?)",
+            (workflow_id, normalized["name"], int(row["version"]), fingerprint, canonical_json(normalized), utc_now()),
+        )
+        created = connection.execute("SELECT * FROM workflow_versions WHERE id=?", (workflow_id,)).fetchone()
+        return _decode(created, ("definition_json",))  # type: ignore[return-value]
+
+    def publish_workflow(self, workflow: dict[str, Any]) -> dict[str, Any]:
         with self.connection() as connection:
-            existing = connection.execute("SELECT * FROM workflow_versions WHERE fingerprint=?", (fingerprint,)).fetchone()
-            if existing:
-                return _decode(existing, ("definition_json",))  # type: ignore[return-value]
-            row = connection.execute(
-                "SELECT COALESCE(MAX(version),0)+1 AS version FROM workflow_versions WHERE name=?",
-                (normalized["name"],),
-            ).fetchone()
-            workflow_id = _id("wf")
-            connection.execute(
-                "INSERT INTO workflow_versions(id,name,version,fingerprint,definition_json,created_at) VALUES(?,?,?,?,?,?)",
-                (workflow_id, normalized["name"], int(row["version"]), fingerprint, canonical_json(normalized), utc_now()),
-            )
-            created = connection.execute("SELECT * FROM workflow_versions WHERE id=?", (workflow_id,)).fetchone()
-            return _decode(created, ("definition_json",))  # type: ignore[return-value]
+            return self._publish_workflow(connection, workflow)
 
     def list_workflows(self) -> list[dict[str, Any]]:
         with self.connection() as connection:
@@ -251,6 +274,134 @@ class CohubStore:
             params.append(version)
         with self.connection() as connection:
             return _decode(connection.execute(query, params).fetchone(), ("definition_json",))
+
+    @staticmethod
+    def _draft_name(definition: dict[str, Any], fallback: str = "untitled") -> str:
+        name = definition.get("name")
+        return name if isinstance(name, str) and name.strip() else fallback
+
+    def create_workflow_draft(
+        self,
+        definition: dict[str, Any],
+        *,
+        layout: dict[str, Any] | None = None,
+        source_workflow_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not isinstance(definition, dict):
+            raise ValueError("draft definition must be an object")
+        if layout is not None and not isinstance(layout, dict):
+            raise ValueError("draft layout must be an object")
+        draft_id, now = _id("draft"), utc_now()
+        with self.connection() as connection:
+            connection.execute(
+                """INSERT INTO workflow_drafts(
+                       id,name,revision,status,definition_json,layout_json,
+                       source_workflow_id,created_at,updated_at
+                   ) VALUES(?,?,1,'active',?,?,?,?,?)""",
+                (
+                    draft_id,
+                    self._draft_name(definition),
+                    canonical_json(definition),
+                    canonical_json(layout or {}),
+                    source_workflow_id,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            return _decode(row, ("definition_json", "layout_json"))  # type: ignore[return-value]
+
+    def create_workflow_draft_from_version(self, name: str, version: int | None = None) -> dict[str, Any]:
+        workflow = self.get_workflow(name, version)
+        if workflow is None:
+            raise KeyError(f"workflow not found: {name}")
+        return self.create_workflow_draft(
+            workflow["definition"], source_workflow_id=workflow["id"]
+        )
+
+    def get_workflow_draft(self, draft_id: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            return _decode(row, ("definition_json", "layout_json"))
+
+    def list_workflow_drafts(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM workflow_drafts"
+        params: tuple[Any, ...] = ()
+        if status is not None:
+            query += " WHERE status=?"
+            params = (status,)
+        query += " ORDER BY updated_at DESC"
+        with self.connection() as connection:
+            rows = connection.execute(query, params).fetchall()
+            return [_decode(row, ("definition_json", "layout_json")) for row in rows]  # type: ignore[misc]
+
+    def update_workflow_draft(
+        self,
+        draft_id: str,
+        *,
+        expected_revision: int,
+        definition: dict[str, Any] | None = None,
+        layout: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if definition is None and layout is None:
+            raise ValueError("definition or layout is required")
+        if definition is not None and not isinstance(definition, dict):
+            raise ValueError("draft definition must be an object")
+        if layout is not None and not isinstance(layout, dict):
+            raise ValueError("draft layout must be an object")
+        with self.connection() as connection:
+            current = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            if current is None:
+                raise KeyError(f"workflow draft not found: {draft_id}")
+            if current["status"] != "active":
+                raise DraftConflictError("published workflow drafts are immutable")
+            current_definition = json.loads(current["definition_json"])
+            current_layout = json.loads(current["layout_json"])
+            next_definition = definition if definition is not None else current_definition
+            next_layout = layout if layout is not None else current_layout
+            result = connection.execute(
+                """UPDATE workflow_drafts
+                   SET name=?,definition_json=?,layout_json=?,revision=revision+1,updated_at=?
+                   WHERE id=? AND status='active' AND revision=?""",
+                (
+                    self._draft_name(next_definition, current["name"]),
+                    canonical_json(next_definition),
+                    canonical_json(next_layout),
+                    utc_now(),
+                    draft_id,
+                    expected_revision,
+                ),
+            )
+            if result.rowcount != 1:
+                raise DraftConflictError("workflow draft revision is stale")
+            row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            return _decode(row, ("definition_json", "layout_json"))  # type: ignore[return-value]
+
+    def publish_workflow_draft(self, draft_id: str, *, expected_revision: int) -> dict[str, Any]:
+        with self.connection() as connection:
+            current = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            if current is None:
+                raise KeyError(f"workflow draft not found: {draft_id}")
+            if current["status"] != "active":
+                raise DraftConflictError("workflow draft is already published")
+            if int(current["revision"]) != expected_revision:
+                raise DraftConflictError("workflow draft revision is stale")
+            workflow = self._publish_workflow(connection, json.loads(current["definition_json"]))
+            now = utc_now()
+            result = connection.execute(
+                """UPDATE workflow_drafts
+                   SET status='published',published_workflow_id=?,revision=revision+1,
+                       updated_at=?,published_at=?
+                   WHERE id=? AND status='active' AND revision=?""",
+                (workflow["id"], now, now, draft_id, expected_revision),
+            )
+            if result.rowcount != 1:
+                raise DraftConflictError("workflow draft revision is stale")
+            row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            return {
+                "draft": _decode(row, ("definition_json", "layout_json")),
+                "workflow": workflow,
+            }
 
     def create_task(self, title: str, input_data: dict[str, Any] | None = None) -> dict[str, Any]:
         task_id, now = _id("task"), utc_now()

@@ -27,6 +27,7 @@ Autonomous agents are excellent at open-ended work but should not own every cont
 - Process restart and checkpoint/resume behavior.
 - Hermes Runs API executor plus deterministic local executor.
 - Durable Hermes tool-approval bridge with same-run resume and cancellation propagation.
+- Durable workflow drafts with optimistic revisions, form-based node editing, validation, and explicit publish.
 - Hermes Agent plugin tools.
 - Responsive local dashboard with Today, Tasks, Runs, Workflows, Approvals, and Artifacts views.
 - Token-protected JSON API.
@@ -76,6 +77,14 @@ The correlation ID does not replace provider idempotency or read-back reconcilia
 The dashboard's **New run** form can use the current Hermes default or select an authenticated provider/model for the entire run. Cohub fetches `/api/model/options` server-side and exposes only a credential-free normalized catalog through its token-protected `/api/hermes/models` endpoint; the browser never receives the Hermes API key.
 
 Explicit provider/model values are validated together and persisted before any step is submitted. The selected values are reused after process restarts, and Cohub records the provider, model, and token usage reported by Hermes without inferring missing metadata. If the catalog is unavailable, default runs remain available while explicit overrides fail closed.
+
+### Workflow drafts
+
+Published workflow versions remain immutable. Form editing and JSON import now create records in `workflow_drafts`; each save requires the revision last read by the editor and returns `409 Conflict` instead of overwriting a newer change.
+
+Draft definitions may be temporarily invalid while they are being authored. Operators can save, reopen, validate, duplicate a published version, import/export canonical JSON, and explicitly publish a validated revision. Canvas layout is stored in a separate `layout_json` field so future visual positioning cannot change the executable workflow fingerprint.
+
+The draft API is available through `GET/POST /api/workflow-drafts`, `GET/PUT /api/workflow-drafts/{id}`, and the `validate` and `publish` sub-resources. Importing JSON never publishes or runs it automatically. The migration is additive; rolling back the application leaves draft rows intact and older Cohub versions safely ignore the new table.
 
 ### Hermes tool approvals
 

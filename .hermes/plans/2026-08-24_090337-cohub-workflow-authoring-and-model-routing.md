@@ -1,9 +1,9 @@
 # Cohub Workflow Authoring and Model Routing Plan
 
-**Status:** Proposed
+**Status:** In progress — PR 1 merged; PR 2 implemented
 **Repository:** `duthaho/lona`
 **Application:** `apps/cohub`
-**Baseline:** `main` at `180e039`
+**Baseline:** `main` at `110368b`
 **Plan date:** 2026-08-24
 
 ## Goal
@@ -148,9 +148,10 @@ Make Cohub usable by a non-technical operator: choose a reliable model for a run
 
 ```text
 GET    /api/hermes/models
+GET    /api/workflow-drafts
 POST   /api/workflow-drafts
 GET    /api/workflow-drafts/{id}
-PATCH  /api/workflow-drafts/{id}
+PUT    /api/workflow-drafts/{id}
 POST   /api/workflow-drafts/{id}/validate
 POST   /api/workflow-drafts/{id}/publish
 POST   /api/workflow-drafts/{id}/generate
@@ -178,8 +179,8 @@ New persisted data should include workflow drafts, draft revisions, generation r
 
 Create separate PRs and deploy each capability before beginning the next:
 
-1. **PR 1: Model catalog, selection, persistence, and usage.**
-2. **PR 2: Durable workflow drafts and form-based node editor.**
+1. ✅ **PR 1: Model catalog, selection, persistence, and usage.**
+2. ✅ **PR 2: Durable workflow drafts and form-based node editor.**
 3. **PR 3: Drag-and-drop canvas and labeled connections.**
 4. **PR 4: Restricted Hermes prompt-to-workflow generation.**
 5. **PR 5: Dynamic run-input forms, templates, and model analytics.**

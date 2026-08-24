@@ -3,7 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from cohub.db import CohubStore
+from cohub.db import CohubStore, DraftConflictError
+from cohub.schemas import WorkflowValidationError
 
 
 WORKFLOW = {
@@ -125,6 +126,7 @@ class CohubStoreTests(unittest.TestCase):
 
     def test_additive_model_columns_migrate_an_existing_database(self):
         with self.store.connection() as connection:
+            connection.execute("DROP TABLE workflow_drafts")
             for column in ("usage_json", "requested_model", "requested_provider"):
                 connection.execute(f"ALTER TABLE runs DROP COLUMN {column}")
             for column in ("usage_json", "reported_model", "reported_provider", "requested_model", "requested_provider"):
@@ -135,8 +137,60 @@ class CohubStoreTests(unittest.TestCase):
         with self.store.connection() as connection:
             run_columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
             external_columns = {row["name"] for row in connection.execute("PRAGMA table_info(external_executions)")}
+            draft_columns = {row["name"] for row in connection.execute("PRAGMA table_info(workflow_drafts)")}
         self.assertTrue({"requested_provider", "requested_model", "usage_json"} <= run_columns)
         self.assertTrue({"requested_provider", "requested_model", "reported_provider", "reported_model", "usage_json"} <= external_columns)
+        self.assertTrue({"id", "revision", "definition_json", "layout_json", "published_workflow_id"} <= draft_columns)
+
+    def test_draft_save_restart_and_optimistic_revision_conflict(self):
+        draft = self.store.create_workflow_draft(
+            {"name": "editable", "start": "missing", "nodes": {}},
+            layout={"work": {"x": 40, "y": 80}},
+        )
+        self.assertEqual(draft["revision"], 1)
+        self.assertEqual(draft["status"], "active")
+
+        saved = self.store.update_workflow_draft(
+            draft["id"],
+            expected_revision=1,
+            definition=WORKFLOW,
+            layout={"work": {"x": 100, "y": 120}},
+        )
+        self.assertEqual(saved["revision"], 2)
+        self.assertEqual(saved["definition"], WORKFLOW)
+        self.assertEqual(saved["layout"]["work"], {"x": 100, "y": 120})
+
+        with self.assertRaises(DraftConflictError):
+            self.store.update_workflow_draft(
+                draft["id"], expected_revision=1, definition={**WORKFLOW, "description": "stale"}
+            )
+
+        restarted = CohubStore(Path(self.temp.name) / "cohub.db")
+        reopened = restarted.get_workflow_draft(draft["id"])
+        self.assertEqual(reopened["revision"], 2)
+        self.assertEqual(reopened["definition"], WORKFLOW)
+
+    def test_duplicate_validate_and_explicitly_publish_draft(self):
+        version = self.store.publish_workflow(WORKFLOW)
+        draft = self.store.create_workflow_draft_from_version("simple", 1)
+        self.assertEqual(draft["source_workflow_id"], version["id"])
+        self.assertEqual(draft["definition"], version["definition"])
+
+        result = self.store.publish_workflow_draft(draft["id"], expected_revision=1)
+        self.assertEqual(result["draft"]["status"], "published")
+        self.assertEqual(result["draft"]["revision"], 2)
+        self.assertEqual(result["workflow"]["fingerprint"], version["fingerprint"])
+        self.assertEqual(result["draft"]["published_workflow_id"], version["id"])
+
+        with self.assertRaises(DraftConflictError):
+            self.store.update_workflow_draft(
+                draft["id"], expected_revision=2, definition={**WORKFLOW, "description": "too late"}
+            )
+
+        invalid = self.store.create_workflow_draft({"name": "invalid", "start": "missing", "nodes": {}})
+        with self.assertRaises(WorkflowValidationError):
+            self.store.publish_workflow_draft(invalid["id"], expected_revision=1)
+        self.assertEqual(self.store.get_workflow_draft(invalid["id"])["status"], "active")
 
     def test_persists_step_approval_and_artifact_records(self):
         published = self.store.publish_workflow(WORKFLOW)
