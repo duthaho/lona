@@ -32,27 +32,53 @@ export type Approval = {
   created_at?: string;
 };
 
+export type WorkflowNodeType = "task" | "decision" | "parallel" | "human" | "end";
+
 export type WorkflowNode = {
-  type: string;
+  type: WorkflowNodeType;
   next?: string;
   routes?: Record<string, string>;
   branches?: string[];
   prompt?: string;
   payload?: Record<string, unknown>;
+  max_attempts?: number;
+  side_effect?: boolean;
+  approval_payload?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  local_result?: Record<string, unknown>;
+};
+
+export type WorkflowDefinition = {
+  name: string;
+  description?: string;
+  start: string;
+  defaults?: { max_attempts?: number };
+  nodes: Record<string, WorkflowNode>;
 };
 
 export type Workflow = {
   name: string;
   version: number;
   fingerprint: string;
-  definition: {
-    name: string;
-    description?: string;
-    start: string;
-    nodes: Record<string, WorkflowNode>;
-  };
+  definition: WorkflowDefinition;
   created_at?: string;
 };
+
+export type WorkflowDraft = {
+  id: string;
+  name: string;
+  revision: number;
+  status: "active" | "published";
+  definition: WorkflowDefinition;
+  layout: Record<string, { x: number; y: number }>;
+  source_workflow_id?: string;
+  published_workflow_id?: string;
+  created_at: string;
+  updated_at: string;
+  published_at?: string;
+};
+
+export type DraftDiagnostic = { path: string; message: string };
 
 export type Artifact = { path: string; sha256: string; size: number };
 export type Step = { step_id: string; status: string; attempt: number; reason?: string; error?: string };

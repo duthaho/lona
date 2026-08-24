@@ -134,6 +134,60 @@ class ApiTests(unittest.TestCase):
             )
         self.assertEqual(context.exception.code, 400)
 
+    def test_workflow_draft_lifecycle_and_revision_conflict(self):
+        status, draft = self.request(
+            "POST",
+            "/api/workflow-drafts",
+            {"definition": {"name": "draft-api", "start": "missing", "nodes": {}}, "layout": {}},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(draft["revision"], 1)
+
+        status, validation = self.request("POST", f"/api/workflow-drafts/{draft['id']}/validate", {})
+        self.assertEqual(status, 200)
+        self.assertFalse(validation["valid"])
+        self.assertEqual(validation["diagnostics"][0]["path"], "nodes")
+
+        definition = {**WORKFLOW, "name": "draft-api"}
+        status, saved = self.request(
+            "PUT",
+            f"/api/workflow-drafts/{draft['id']}",
+            {"revision": 1, "definition": definition},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["revision"], 2)
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "PUT",
+                f"/api/workflow-drafts/{draft['id']}",
+                {"revision": 1, "definition": {**definition, "description": "stale"}},
+            )
+        self.assertEqual(context.exception.code, 409)
+
+        status, validation = self.request("POST", f"/api/workflow-drafts/{draft['id']}/validate", {})
+        self.assertTrue(validation["valid"])
+        status, published = self.request(
+            "POST", f"/api/workflow-drafts/{draft['id']}/publish", {"revision": 2}
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(published["draft"]["status"], "published")
+        self.assertEqual(published["workflow"]["name"], "draft-api")
+
+        status, listing = self.request("GET", "/api/workflow-drafts")
+        self.assertEqual(listing["drafts"][0]["id"], draft["id"])
+        status, reopened = self.request("GET", f"/api/workflow-drafts/{draft['id']}")
+        self.assertEqual(reopened["revision"], 3)
+
+    def test_duplicates_a_published_workflow_into_a_draft(self):
+        _, workflow = self.request("POST", "/api/workflows", WORKFLOW)
+        status, draft = self.request(
+            "POST", "/api/workflow-drafts", {"workflow_name": "api-demo", "version": 1}
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(draft["source_workflow_id"], workflow["id"])
+        self.assertEqual(draft["definition"], workflow["definition"])
+
     def test_overview_and_static_dashboard(self):
         self.request("POST", "/api/workflows", WORKFLOW)
         self.request("POST", "/api/runs", {"workflow": "api-demo", "input": {}})

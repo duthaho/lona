@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
 
-from .db import CohubStore
+from .db import CohubStore, DraftConflictError
 from .engine import EngineError, WorkflowEngine
-from .schemas import WorkflowValidationError
+from .schemas import WorkflowValidationError, validate_workflow
 from .service import WorkerService
 
 
@@ -22,6 +22,21 @@ class ApiError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+def _draft_diagnostic(message: str) -> dict[str, str]:
+    node = re.search(r"(?:node|branch) ([A-Za-z0-9._-]+)", message)
+    if node:
+        path = f"nodes.{node.group(1)}"
+    elif message.startswith("start node"):
+        path = "start"
+    elif message.startswith("name "):
+        path = "name"
+    elif message.startswith("nodes "):
+        path = "nodes"
+    else:
+        path = "workflow"
+    return {"path": path, "message": message}
 
 
 def create_server(
@@ -111,6 +126,9 @@ def create_server(
             if method == "GET" and path == "/api/workflows":
                 self._json(200, {"workflows": store.list_workflows()})
                 return
+            if method == "GET" and path == "/api/workflow-drafts":
+                self._json(200, {"drafts": store.list_workflow_drafts()})
+                return
             if method == "GET" and path == "/api/approvals":
                 self._json(200, {"approvals": store.list_approvals(status="pending")})
                 return
@@ -118,10 +136,78 @@ def create_server(
             if method == "GET" and run_match:
                 self._json(200, engine.status(run_match.group(1)))
                 return
+            draft_match = re.fullmatch(r"/api/workflow-drafts/([A-Za-z0-9_-]+)", path)
+            if method == "GET" and draft_match:
+                draft = store.get_workflow_draft(draft_match.group(1))
+                if draft is None:
+                    raise ApiError(404, "workflow draft not found")
+                self._json(200, draft)
+                return
+            if method == "PUT" and draft_match:
+                body = self._read_json()
+                revision = body.get("revision")
+                if isinstance(revision, bool) or not isinstance(revision, int):
+                    raise ApiError(400, "revision must be an integer")
+                definition = body.get("definition")
+                layout = body.get("layout")
+                if definition is not None and not isinstance(definition, dict):
+                    raise ApiError(400, "definition must be an object")
+                if layout is not None and not isinstance(layout, dict):
+                    raise ApiError(400, "layout must be an object")
+                draft = store.update_workflow_draft(
+                    draft_match.group(1),
+                    expected_revision=revision,
+                    definition=definition,
+                    layout=layout,
+                )
+                self._json(200, draft)
+                return
 
             if method == "POST" and path == "/api/workflows":
                 workflow = store.publish_workflow(self._read_json())
                 self._json(201, workflow)
+                return
+            if method == "POST" and path == "/api/workflow-drafts":
+                body = self._read_json()
+                workflow_name = body.get("workflow_name")
+                if workflow_name is not None:
+                    if not isinstance(workflow_name, str) or not workflow_name:
+                        raise ApiError(400, "workflow_name must be a non-empty string")
+                    version = body.get("version")
+                    if version is not None and (isinstance(version, bool) or not isinstance(version, int)):
+                        raise ApiError(400, "version must be an integer")
+                    draft = store.create_workflow_draft_from_version(workflow_name, version)
+                else:
+                    definition = body.get("definition")
+                    layout = body.get("layout", {})
+                    if not isinstance(definition, dict):
+                        raise ApiError(400, "definition must be an object")
+                    if not isinstance(layout, dict):
+                        raise ApiError(400, "layout must be an object")
+                    draft = store.create_workflow_draft(definition, layout=layout)
+                self._json(201, draft)
+                return
+            draft_validate_match = re.fullmatch(r"/api/workflow-drafts/([A-Za-z0-9_-]+)/validate", path)
+            if method == "POST" and draft_validate_match:
+                self._read_json()
+                draft = store.get_workflow_draft(draft_validate_match.group(1))
+                if draft is None:
+                    raise ApiError(404, "workflow draft not found")
+                try:
+                    validate_workflow(draft["definition"])
+                    diagnostics: list[dict[str, str]] = []
+                except WorkflowValidationError as exc:
+                    diagnostics = [_draft_diagnostic(str(exc))]
+                self._json(200, {"valid": not diagnostics, "revision": draft["revision"], "diagnostics": diagnostics})
+                return
+            draft_publish_match = re.fullmatch(r"/api/workflow-drafts/([A-Za-z0-9_-]+)/publish", path)
+            if method == "POST" and draft_publish_match:
+                body = self._read_json()
+                revision = body.get("revision")
+                if isinstance(revision, bool) or not isinstance(revision, int):
+                    raise ApiError(400, "revision must be an integer")
+                result = store.publish_workflow_draft(draft_publish_match.group(1), expected_revision=revision)
+                self._json(201, result)
                 return
             if method == "POST" and path == "/api/runs":
                 body = self._read_json()
@@ -215,11 +301,16 @@ def create_server(
         def do_POST(self) -> None:
             self._safe_dispatch("POST")
 
+        def do_PUT(self) -> None:
+            self._safe_dispatch("PUT")
+
         def _safe_dispatch(self, method: str) -> None:
             try:
                 self._dispatch(method)
             except ApiError as exc:
                 self._json(exc.status, {"error": str(exc)})
+            except DraftConflictError as exc:
+                self._json(409, {"error": str(exc)})
             except (EngineError, WorkflowValidationError, KeyError, ValueError) as exc:
                 self._json(400, {"error": str(exc)})
             except Exception:

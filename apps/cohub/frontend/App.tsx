@@ -5,7 +5,10 @@ import {
   Menu, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Square, TerminalSquare,
   X, XCircle, Zap,
 } from "lucide-react";
-import type { Approval, ModelCatalog, Overview, Run, RunDetail, Task, Workflow } from "./types";
+import type { Approval, ModelCatalog, Overview, Run, RunDetail, Task, Workflow, WorkflowDraft } from "./types";
+import { request } from "./api";
+import { WorkflowDraftEditor } from "./WorkflowDraftEditor";
+import { blankWorkflow } from "./workflowDraft";
 import { approvalSummary, filterRuns, relativeTime, terminalStatuses, titleCase } from "./utils";
 import "./styles.css";
 
@@ -22,21 +25,6 @@ const sampleWorkflow = {
     done: { type: "end" },
   },
 };
-
-async function request<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
-  const headers = new Headers(options.headers);
-  headers.set("Accept", "application/json");
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (options.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, { ...options, headers });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(body.error || `Request failed with HTTP ${response.status}`);
-    Object.assign(error, { status: response.status });
-    throw error;
-  }
-  return body as T;
-}
 
 function Status({ value }: { value: string }) {
   return <span className={`status status-${value}`}><i />{titleCase(value)}</span>;
@@ -90,6 +78,7 @@ function App() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
+  const [drafts, setDrafts] = useState<WorkflowDraft[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,6 +91,7 @@ function App() {
   const [runLoading, setRunLoading] = useState(false);
   const [selectedApproval, setSelectedApproval] = useState<Approval | null>(null);
   const [selectedWorkflow, setSelectedWorkflow] = useState<Workflow | null>(null);
+  const [editingDraft, setEditingDraft] = useState<WorkflowDraft | null>(null);
   const [runFilter, setRunFilter] = useState("all");
   const [query, setQuery] = useState("");
 
@@ -113,15 +103,17 @@ function App() {
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [overviewData, allRuns, allTasks, allWorkflows, pending] = await Promise.all([
+      const [overviewData, allRuns, allTasks, allWorkflows, pending, allDrafts] = await Promise.all([
         request<Overview>("/api/overview", token),
         request<{ runs: Run[] }>("/api/runs", token),
         request<{ tasks: Task[] }>("/api/tasks", token),
         request<{ workflows: Workflow[] }>("/api/workflows", token),
         request<{ approvals: Approval[] }>("/api/approvals", token),
+        request<{ drafts: WorkflowDraft[] }>("/api/workflow-drafts", token),
       ]);
       setOverview(overviewData); setRuns(allRuns.runs); setTasks(allTasks.tasks);
       setWorkflows(allWorkflows.workflows); setApprovals(pending.approvals);
+      setDrafts(allDrafts.drafts);
       setSelectedWorkflow((current) => current || allWorkflows.workflows[0] || null);
       try { setModelCatalog(await request<ModelCatalog>("/api/hermes/models", token)); }
       catch { setModelCatalog(null); }
@@ -162,6 +154,22 @@ function App() {
 
   const navigate = (next: View) => { setView(next); setMobileNav(false); };
   const reviewApproval = (approval: Approval) => { setSelectedApproval(approval); setModal("approval"); };
+  const createDraft = async () => {
+    try {
+      const draft = await request<WorkflowDraft>("/api/workflow-drafts", token, { method: "POST", body: JSON.stringify({ definition: blankWorkflow(), layout: {} }) });
+      setDrafts((current) => [draft, ...current]); setEditingDraft(draft);
+    } catch (caught) { notify((caught as Error).message); }
+  };
+  const duplicateWorkflow = async (workflow: Workflow) => {
+    try {
+      const draft = await request<WorkflowDraft>("/api/workflow-drafts", token, { method: "POST", body: JSON.stringify({ workflow_name: workflow.name, version: workflow.version }) });
+      setDrafts((current) => [draft, ...current]); setEditingDraft(draft);
+    } catch (caught) { notify((caught as Error).message); }
+  };
+  const openDraft = async (draft: WorkflowDraft) => {
+    try { setEditingDraft(await request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, token)); }
+    catch (caught) { notify((caught as Error).message); }
+  };
   const filteredRuns = useMemo(() => filterRuns(runs, runFilter, query), [runs, runFilter, query]);
   const filteredTasks = useMemo(() => tasks.filter((task) => `${task.title} ${task.id} ${task.status}`.toLowerCase().includes(query.toLowerCase())), [tasks, query]);
 
@@ -188,15 +196,16 @@ function App() {
         {view === "overview" && <OverviewView overview={overview} runs={runs} approvals={approvals} onRun={openRun} onApproval={reviewApproval} onNavigate={navigate} onNewRun={() => setModal("new-run")} />}
         {view === "runs" && <section><PageIntro eyebrow="Execution history" title="Runs" description="Track every workflow execution from queue to delivery." action={<button className="button primary" onClick={() => setModal("new-run")}><Plus size={16} /> New run</button>} /><FilterBar query={query} onQuery={setQuery} status={runFilter} onStatus={setRunFilter} />{filteredRuns.length ? <div className="panel table-panel"><RunTable runs={filteredRuns} onSelect={openRun} /></div> : <EmptyState icon={Search} title="No matching runs" description="Try a different search or status filter." />}</section>}
         {view === "tasks" && <section><PageIntro eyebrow="Delegated goals" title="Tasks" description="The user intent behind each workflow run." /><div className="filter-bar"><label className="search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks" /></label></div><div className="panel list-panel">{filteredTasks.length ? filteredTasks.map((task) => <div className="task-row" key={task.id}><span className="task-check"><Check size={15} /></span><div><strong>{task.title}</strong><small>{task.id} · Updated {relativeTime(task.updated_at)}</small></div><Status value={task.status} /></div>) : <EmptyState title="No matching tasks" description="Tasks appear when you delegate a new run." />}</div></section>}
-        {view === "workflows" && <WorkflowsView workflows={workflows} selected={selectedWorkflow} onSelect={setSelectedWorkflow} onRun={(workflow) => { setSelectedWorkflow(workflow); setModal("new-run"); }} onPublish={() => setModal("publish")} />}
+        {view === "workflows" && <WorkflowsView workflows={workflows} drafts={drafts} selected={selectedWorkflow} onSelect={setSelectedWorkflow} onRun={(workflow) => { setSelectedWorkflow(workflow); setModal("new-run"); }} onNewDraft={() => void createDraft()} onEditDraft={(draft) => void openDraft(draft)} onDuplicate={(workflow) => void duplicateWorkflow(workflow)} onImport={() => setModal("publish")} />}
         {view === "approvals" && <section><PageIntro eyebrow="Human in the loop" title="Approvals" description="Review protected workflow actions and Hermes tool requests before they continue." /><div className="attention-note"><ShieldCheck size={18} /><div><strong>Decisions are payload-bound</strong><span>Every decision is checked against the exact SHA-256 payload you reviewed. Hermes tool approvals are always one-shot.</span></div></div><div className="panel approval-list">{approvals.length ? approvals.map((approval) => <ApprovalItem key={approval.id} approval={approval} onReview={reviewApproval} />) : <EmptyState icon={ShieldCheck} title="You're all caught up" description="No protected actions are waiting for your decision." />}</div></section>}
       </>}
     </main>
 
     <RunDrawer run={selectedRun} loading={runLoading} onClose={() => setSelectedRun(null)} onAction={runAction} />
     <NewRunModal open={modal === "new-run"} workflows={workflows} models={modelCatalog} preferred={selectedWorkflow?.name || ""} token={token} onClose={() => setModal(null)} onCreated={async (run) => { setModal(null); notify("Workflow run started"); await loadData(true); navigate("runs"); await openRun(run); }} />
-    <PublishModal open={modal === "publish"} token={token} onClose={() => setModal(null)} onPublished={async () => { setModal(null); notify("Workflow published"); await loadData(true); }} />
+    <ImportWorkflowModal open={modal === "publish"} token={token} onClose={() => setModal(null)} onImported={(draft) => { setModal(null); setDrafts((current) => [draft, ...current]); setEditingDraft(draft); notify("Workflow JSON imported as a draft"); }} />
     <ApprovalModal approval={selectedApproval} open={modal === "approval"} token={token} onClose={() => { setModal(null); setSelectedApproval(null); }} onResolved={async (decision) => { setModal(null); setSelectedApproval(null); notify(decision === "approve" ? "Approved once" : "Action denied"); await loadData(true); }} />
+    {editingDraft && <WorkflowDraftEditor draft={editingDraft} token={token} onClose={() => setEditingDraft(null)} onSaved={(saved) => { setEditingDraft(saved); setDrafts((current) => current.map((item) => item.id === saved.id ? saved : item)); }} onPublished={async (workflow) => { setEditingDraft(null); setSelectedWorkflow(workflow); notify("Workflow draft published"); await loadData(true); }} />}
     <div className={`toast ${toast ? "toast-visible" : ""}`} role="status">{toast}</div>
   </div>;
 }
@@ -228,9 +237,23 @@ function OverviewView({ overview, runs, approvals, onRun, onApproval, onNavigate
   </section>;
 }
 
-function WorkflowsView({ workflows, selected, onSelect, onRun, onPublish }: { workflows: Workflow[]; selected: Workflow | null; onSelect: (workflow: Workflow) => void; onRun: (workflow: Workflow) => void; onPublish: () => void }) {
-  return <section><PageIntro eyebrow="Deterministic automation" title="Workflows" description="Published definitions are immutable; every run is pinned to an exact version." action={<button className="button primary" onClick={onPublish}><Plus size={16} /> Publish workflow</button>} />
-    {!workflows.length ? <EmptyState icon={GitBranch} title="No workflows yet" description="Publish a JSON workflow definition to get started." action={<button className="button primary" onClick={onPublish}>Publish workflow</button>} /> : <div className="workflow-layout"><aside className="workflow-list">{workflows.map((workflow) => <button key={`${workflow.name}-${workflow.version}`} className={selected?.fingerprint === workflow.fingerprint ? "active" : ""} onClick={() => onSelect(workflow)}><span className="workflow-symbol"><GitBranch size={16} /></span><span><strong>{workflow.name}</strong><small>Version {workflow.version} · {Object.keys(workflow.definition.nodes).length} steps</small></span><ChevronRight size={15} /></button>)}</aside>{selected && <article className="panel workflow-detail"><header><div><span className="overline">Workflow version {selected.version}</span><h3>{selected.name}</h3><p>{selected.definition.description || "Deterministic workflow definition"}</p></div><button className="button primary" onClick={() => onRun(selected)}><Play size={15} /> Run</button></header><div className="fingerprint"><span>Fingerprint</span><code>{selected.fingerprint}</code></div><div className="workflow-canvas">{Object.entries(selected.definition.nodes).map(([id, node], index) => <div className="flow-item" key={id}>{index > 0 && <span className="flow-connector" />}<article className={`flow-node node-${node.type} ${selected.definition.start === id ? "node-start" : ""}`}><div><span className="node-type">{node.type}</span>{selected.definition.start === id && <b>Start</b>}</div><strong>{id}</strong><small>{node.next ? `Next → ${node.next}` : node.routes ? Object.entries(node.routes).map(([label, target]) => `${label} → ${target}`).join(" · ") : node.branches ? `Branches → ${node.branches.join(", ")}` : "Terminal step"}</small></article></div>)}</div></article>}</div>}
+function WorkflowsView({ workflows, drafts, selected, onSelect, onRun, onNewDraft, onEditDraft, onDuplicate, onImport }: {
+  workflows: Workflow[];
+  drafts: WorkflowDraft[];
+  selected: Workflow | null;
+  onSelect: (workflow: Workflow) => void;
+  onRun: (workflow: Workflow) => void;
+  onNewDraft: () => void;
+  onEditDraft: (draft: WorkflowDraft) => void;
+  onDuplicate: (workflow: Workflow) => void;
+  onImport: () => void;
+}) {
+  const [tab, setTab] = useState<"published" | "drafts">("published");
+  const activeDrafts = drafts.filter((draft) => draft.status === "active");
+  return <section>
+    <PageIntro eyebrow="Deterministic automation" title="Workflows" description="Build durable drafts, validate them, then publish immutable versions." action={<div className="page-actions"><button className="button secondary" onClick={onImport}><FileCode2 size={15} /> Import JSON</button><button className="button primary" onClick={onNewDraft}><Plus size={16} /> New draft</button></div>} />
+    <div className="workflow-tabs"><button className={tab === "published" ? "active" : ""} onClick={() => setTab("published")}>Published <span>{workflows.length}</span></button><button className={tab === "drafts" ? "active" : ""} onClick={() => setTab("drafts")}>Drafts <span>{activeDrafts.length}</span></button></div>
+    {tab === "drafts" ? <div className="draft-list panel">{activeDrafts.length ? activeDrafts.map((draft) => <button key={draft.id} onClick={() => onEditDraft(draft)}><span className="workflow-symbol draft-symbol"><FileCode2 size={16} /></span><span><strong>{draft.name}</strong><small>Revision {draft.revision} · {Object.keys(draft.definition.nodes || {}).length} nodes · Updated {relativeTime(draft.updated_at)}</small></span><Status value={draft.status} /><ChevronRight size={15} /></button>) : <EmptyState icon={FileCode2} title="No active drafts" description="Create a form-based draft or duplicate a published workflow." action={<button className="button primary" onClick={onNewDraft}>Create draft</button>} />}</div> : !workflows.length ? <EmptyState icon={GitBranch} title="No published workflows yet" description="Create a draft, validate it, and explicitly publish the first immutable version." action={<button className="button primary" onClick={onNewDraft}>Create draft</button>} /> : <div className="workflow-layout"><aside className="workflow-list">{workflows.map((workflow) => <button key={`${workflow.name}-${workflow.version}`} className={selected?.fingerprint === workflow.fingerprint ? "active" : ""} onClick={() => onSelect(workflow)}><span className="workflow-symbol"><GitBranch size={16} /></span><span><strong>{workflow.name}</strong><small>Version {workflow.version} · {Object.keys(workflow.definition.nodes).length} steps</small></span><ChevronRight size={15} /></button>)}</aside>{selected && <article className="panel workflow-detail"><header><div><span className="overline">Workflow version {selected.version}</span><h3>{selected.name}</h3><p>{selected.definition.description || "Deterministic workflow definition"}</p></div><div className="workflow-actions"><button className="button secondary" onClick={() => onDuplicate(selected)}><FileCode2 size={15} /> Edit as draft</button><button className="button primary" onClick={() => onRun(selected)}><Play size={15} /> Run</button></div></header><div className="fingerprint"><span>Fingerprint</span><code>{selected.fingerprint}</code></div><div className="workflow-canvas">{Object.entries(selected.definition.nodes).map(([id, node], index) => <div className="flow-item" key={id}>{index > 0 && <span className="flow-connector" />}<article className={`flow-node node-${node.type} ${selected.definition.start === id ? "node-start" : ""}`}><div><span className="node-type">{node.type}</span>{selected.definition.start === id && <b>Start</b>}</div><strong>{id}</strong><small>{node.next ? `Next → ${node.next}` : node.routes ? Object.entries(node.routes).map(([label, target]) => `${label} → ${target}`).join(" · ") : node.branches ? `Branches → ${node.branches.join(", ")}` : "Terminal step"}</small></article></div>)}</div></article>}</div>}
   </section>;
 }
 
@@ -271,10 +294,10 @@ function NewRunModal({ open, workflows, models, preferred, token, onClose, onCre
   </form></ModalShell>;
 }
 
-function PublishModal({ open, token, onClose, onPublished }: { open: boolean; token: string; onClose: () => void; onPublished: () => void }) {
+function ImportWorkflowModal({ open, token, onClose, onImported }: { open: boolean; token: string; onClose: () => void; onImported: (draft: WorkflowDraft) => void }) {
   const [definition, setDefinition] = useState(JSON.stringify(sampleWorkflow, null, 2)); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { await request("/api/workflows", token, { method: "POST", body: JSON.stringify(JSON.parse(definition)) }); onPublished(); } catch (caught) { setError((caught as Error).message); } finally { setBusy(false); } };
-  return <ModalShell open={open} title="Publish workflow" eyebrow="Immutable definition" onClose={onClose} wide><form onSubmit={submit} className="form-stack"><div className="code-label"><span>Workflow JSON</span><small>A new immutable version is created after validation.</small></div><textarea className="code-editor" value={definition} onChange={(event) => setDefinition(event.target.value)} rows={22} spellCheck={false} />{error && <p className="form-error">{error}</p>}<footer><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy}>{busy ? "Validating…" : "Validate & publish"}<FileCode2 size={15} /></button></footer></form></ModalShell>;
+  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const draft = await request<WorkflowDraft>("/api/workflow-drafts", token, { method: "POST", body: JSON.stringify({ definition: JSON.parse(definition), layout: {} }) }); onImported(draft); } catch (caught) { setError((caught as Error).message); } finally { setBusy(false); } };
+  return <ModalShell open={open} title="Import workflow JSON" eyebrow="Advanced authoring" onClose={onClose} wide><form onSubmit={submit} className="form-stack"><div className="code-label"><span>Workflow JSON</span><small>Imported JSON becomes an editable draft. It cannot run until you validate and explicitly publish it.</small></div><textarea aria-label="Workflow JSON" className="code-editor" value={definition} onChange={(event) => setDefinition(event.target.value)} rows={22} spellCheck={false} />{error && <p className="form-error">{error}</p>}<footer><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy}>{busy ? "Importing…" : "Import as draft"}<FileCode2 size={15} /></button></footer></form></ModalShell>;
 }
 
 function ApprovalModal({ approval, open, token, onClose, onResolved }: { approval: Approval | null; open: boolean; token: string; onClose: () => void; onResolved: (decision: "approve" | "reject") => void }) {
