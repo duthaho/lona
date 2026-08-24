@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cohub"
+version = "0.1.0"
+description = "Personal AI coworker control plane with deterministic workflows for Hermes Agent"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "Duthaho"}]
+keywords = ["ai-agent", "workflow", "hermes-agent", "automation", "dashboard"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.13",
+]
+dependencies = []
+
+[project.scripts]
+cohub = "cohub.__main__:main"
+
+[project.entry-points."hermes_agent.plugins"]
+cohub = "cohub.hermes_plugin:register"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+cohub = ["static/*", "examples/*.json"]

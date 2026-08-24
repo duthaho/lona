@@ -1,0 +1,14 @@
+{
+  "name": "personal-daily-briefing",
+  "description": "Collect sources in parallel, draft a verified briefing, and require approval before Telegram delivery.",
+  "start": "collect",
+  "defaults": {"max_attempts": 2},
+  "nodes": {
+    "collect": {"type": "parallel", "branches": ["calendar", "mail"], "next": "draft"},
+    "calendar": {"type": "task", "prompt": "Collect today's calendar commitments.", "local_result": {"output": {"events": 3}}},
+    "mail": {"type": "task", "prompt": "Collect important unread mail.", "fail_until_attempt": 2, "local_result": {"output": {"important": 2}}},
+    "draft": {"type": "task", "prompt": "Create a concise daily briefing from all dependency outputs.", "local_result": {"output": {"report": "Daily briefing is ready"}}, "output_schema": {"type": "object", "required": ["report"]}, "artifact": {"path": "daily/briefing.md", "content": "# Daily briefing\n\nVerified sample artifact.\n"}, "next": "deliver"},
+    "deliver": {"type": "task", "prompt": "Deliver the approved briefing to the configured Telegram origin.", "side_effect": true, "approval_payload": {"action": "send_message", "channel": "telegram", "thread": "origin"}, "local_result": {"output": {"delivered": true}}, "next": "done"},
+    "done": {"type": "end"}
+  }
+}
