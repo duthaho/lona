@@ -88,6 +88,23 @@ class ExecutorTests(unittest.TestCase):
         self.assertIsNone(FakeHermesHandler.calls[0][2])
         self.assertIn("Return exactly one JSON object", FakeHermesHandler.calls[0][1]["instructions"])
 
+    def test_hermes_executor_accepts_bare_output_object(self):
+        result = HermesRunsExecutor._parse_result('{"answer": 5}')
+        self.assertEqual(result.output, {"answer": 5})
+        self.assertEqual(result.status, "completed")
+        self.assertIsNone(result.route)
+
+    def test_hermes_executor_maps_enveloped_result(self):
+        result = HermesRunsExecutor._parse_result(
+            {"status": "completed", "output": {"report": "ok"}, "route": "approved", "reason": "done"}
+        )
+        self.assertEqual(result.output, {"report": "ok"})
+        self.assertEqual(result.route, "approved")
+
+    def test_hermes_executor_rejects_non_object_output_envelope(self):
+        with self.assertRaisesRegex(RuntimeError, "must be an object"):
+            HermesRunsExecutor._parse_result({"output": "not-a-dict"})
+
     def test_worker_claims_executes_and_completes_ready_step(self):
         store = CohubStore(self.root / "cohub.db")
         engine = WorkflowEngine(store, self.root / "artifacts")

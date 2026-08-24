@@ -149,11 +149,18 @@ class HermesRunsExecutor:
             value = raw
         else:
             raise RuntimeError("Hermes step output must be a JSON object")
-        if not isinstance(value, dict) or not isinstance(value.get("output", {}), dict):
-            raise RuntimeError("Hermes step result must contain an output object")
+        if not isinstance(value, dict):
+            raise RuntimeError("Hermes step result must be a JSON object")
+        # Models frequently return the bare output object rather than the
+        # documented {status, output, route, reason} envelope. Treat a dict
+        # without an "output" key as the output itself instead of dropping it.
+        if "output" not in value:
+            return StepResult(output=value)
+        if not isinstance(value["output"], dict):
+            raise RuntimeError("Hermes step result 'output' must be an object")
         return StepResult(
             status=str(value.get("status", "completed")),
-            output=value.get("output", {}),
+            output=value["output"],
             route=value.get("route"),
             reason=value.get("reason"),
             artifacts=tuple(value.get("artifacts", [])),

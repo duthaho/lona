@@ -290,7 +290,9 @@ case "$ACTION" in
       sync_openclaw_groups
     fi
     say "Pulling image + starting $PLATFORM"
-    dc pull
+    # Pull only the gateway image; Cohub is build-only (no image to pull) and
+    # is (re)built by the --build flag below on the hermes profile.
+    dc pull "$PLATFORM"
     if [ "$PLATFORM" = hermes ]; then dc up -d --build; else dc up -d; fi
     propagate_hermes_secrets
     doctor_quick
