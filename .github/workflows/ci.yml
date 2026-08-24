@@ -22,7 +22,11 @@ jobs:
           HERMES_DASHBOARD_PASSWORD: ci-dashboard
           HERMES_API_SERVER_KEY: ci-hermes-api
           COHUB_API_TOKEN: ci-cohub-token
-        run: docker compose --profile hermes config --quiet
+        run: |
+          cp .env.example .env
+          docker compose --profile hermes config --quiet
+      - name: Build Cohub image
+        run: docker build -t lona-cohub:ci apps/cohub
 
   cohub:
     runs-on: ubuntu-latest
