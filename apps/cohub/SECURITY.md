@@ -14,6 +14,7 @@ Cohub assumes a trusted single operator and is local-first by default.
 - API request bodies are limited to 1 MB.
 - Static paths are containment-checked.
 - Worker leases prevent ordinary duplicate execution, but external writes must still use provider idempotency or reconciliation.
+- Hermes tool approvals remain enabled independently of Cohub workflow approvals. Cohub exposes only one-shot approval or denial and persists only Hermes-redacted review fields.
 
 ## Important limitations
 
@@ -30,6 +31,7 @@ Cohub assumes a trusted single operator and is local-first by default.
 2. Set a long random `COHUB_API_TOKEN`.
 3. Put TLS and identity-aware access control in front of Cohub.
 4. Configure Hermes tool approval and sandbox policies independently.
+   Never use global YOLO as a substitute for the approval bridge.
 5. Require approval for email, messaging, GitHub writes, deploys, deletion, infrastructure, and payments.
 6. Give every external write a stable idempotency key and implement read-back reconciliation.
 7. Back up SQLite through its backup API or while Cohub is stopped; never copy WAL files independently.

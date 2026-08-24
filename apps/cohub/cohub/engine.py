@@ -6,7 +6,7 @@ import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .db import CohubStore, utc_now
 from .models import ClaimedStep, StepResult, TERMINAL_RUN_STATUSES
@@ -24,6 +24,8 @@ class WorkflowEngine:
         self.store = store
         self.artifact_root = Path(artifact_root).resolve()
         self.artifact_root.mkdir(parents=True, exist_ok=True)
+        self.external_approval_handler: Callable[[dict[str, Any], str], None] | None = None
+        self.external_cancel_handler: Callable[[str], None] | None = None
 
     def start_run(
         self,
@@ -139,7 +141,7 @@ class WorkflowEngine:
                 if target:
                     self._activate(run_id, target, workflow)
 
-    def fail_step(self, run_id: str, step_id: str, error: str) -> None:
+    def fail_step(self, run_id: str, step_id: str, error: str, *, allow_retry: bool = True) -> None:
         self._active_run(run_id)
         workflow = self.store.get_run_workflow(run_id)["definition"]
         node = workflow["nodes"][step_id]
@@ -148,7 +150,7 @@ class WorkflowEngine:
             raise EngineError(f"step not active: {step_id}")
         attempt = max(1, int(step["attempt"] or 0))
         max_attempts = int(node.get("max_attempts", workflow.get("defaults", {}).get("max_attempts", 1)))
-        if attempt < max_attempts:
+        if allow_retry and attempt < max_attempts:
             self.store.upsert_step(
                 run_id,
                 step_id,
@@ -236,6 +238,27 @@ class WorkflowEngine:
             raise EngineError(f"approval not found: {approval_id}")
         if expected_payload_hash is not None and pending["payload_hash"] != expected_payload_hash:
             raise EngineError("approval payload hash does not match the reviewed payload")
+        if pending["status"] != "pending":
+            if pending["status"] == decision:
+                return pending
+            raise EngineError(f"approval already resolved as {pending['status']}")
+        payload = pending["payload"]
+        if payload.get("kind") == "hermes_tool":
+            if self.external_approval_handler is None:
+                raise EngineError("Hermes approval bridge is unavailable")
+            choice = "once" if decision == "approved" else "deny"
+            if choice not in payload.get("choices", []):
+                raise EngineError(f"Hermes approval choice is not available: {choice}")
+            # Resolve Hermes first. If local persistence then fails, a repeated
+            # call is reconciled idempotently by the external handler.
+            self.external_approval_handler(payload, choice)
+            return self.store.resume_external_after_approval(
+                approval_id,
+                decision,
+                note,
+                int(payload["attempt"]),
+                choice,
+            )
         approval = self.store.resolve_approval(approval_id, decision, note)
         run_id, step_id = approval["run_id"], approval["step_id"]
         if decision == "rejected":
@@ -274,7 +297,23 @@ class WorkflowEngine:
 
     def cancel(self, run_id: str) -> None:
         self._active_run(run_id)
+        if self.external_cancel_handler is not None:
+            self.external_cancel_handler(run_id)
         self.store.transition_run(run_id, "cancelled", "run.cancelled", {})
+
+    def wait_for_external_approval(
+        self,
+        claimed: ClaimedStep,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Checkpoint an external tool gate and release the worker lease."""
+
+        return self.store.checkpoint_external_approval(
+            claimed.run_id,
+            claimed.step_id,
+            claimed.attempt,
+            payload,
+        )
 
     def approval_hash(self, payload: dict[str, Any]) -> str:
         return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
@@ -293,6 +332,7 @@ class WorkflowEngine:
             **run,
             "steps": self.store.get_steps(run_id),
             "approvals": self.store.list_approvals(run_id),
+            "external_executions": self.store.list_external_executions(run_id),
             "artifacts": self.store.list_artifacts(run_id),
             "events": self.store.list_events(run_id),
         }

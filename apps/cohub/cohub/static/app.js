@@ -35,13 +35,16 @@ function runRow(run) {
 }
 
 function approvalCard(approval) {
+  const hermesTool = approval.payload?.kind === "hermes_tool";
+  const eyebrow = hermesTool ? "HERMES TOOL APPROVAL" : "PROTECTED ACTION";
+  const approveLabel = hermesTool ? "Approve once" : "Approve exact payload";
   return `<article class="approval-card">
-    <p class="eyebrow">PROTECTED ACTION</p><h3>${escapeHtml(approval.step_id)}</h3>
+    <p class="eyebrow">${eyebrow}</p><h3>${escapeHtml(approval.step_id)}</h3>
     <pre>${escapeHtml(JSON.stringify(approval.payload, null, 2))}</pre>
     <code>SHA-256 ${escapeHtml(approval.payload_hash)}</code>
     <div class="approval-actions">
-      <button class="button primary approval-action" data-id="${escapeHtml(approval.id)}" data-hash="${escapeHtml(approval.payload_hash)}" data-decision="approve">Approve exact payload</button>
-      <button class="button danger approval-action" data-id="${escapeHtml(approval.id)}" data-hash="${escapeHtml(approval.payload_hash)}" data-decision="reject">Reject</button>
+      <button class="button primary approval-action" data-id="${escapeHtml(approval.id)}" data-hash="${escapeHtml(approval.payload_hash)}" data-decision="approve">${approveLabel}</button>
+      <button class="button danger approval-action" data-id="${escapeHtml(approval.id)}" data-hash="${escapeHtml(approval.payload_hash)}" data-decision="reject">${hermesTool ? "Deny tool action" : "Reject"}</button>
     </div>
   </article>`;
 }

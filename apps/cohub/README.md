@@ -26,6 +26,7 @@ Autonomous agents are excellent at open-ended work but should not own every cont
 - Artifact path containment and SHA-256 metadata.
 - Process restart and checkpoint/resume behavior.
 - Hermes Runs API executor plus deterministic local executor.
+- Durable Hermes tool-approval bridge with same-run resume and cancellation propagation.
 - Hermes Agent plugin tools.
 - Responsive local dashboard with Today, Tasks, Runs, Workflows, Approvals, and Artifacts views.
 - Token-protected JSON API.
@@ -69,6 +70,25 @@ Each claimed step is submitted with a stable Hermes `session_id` for correlation
 ```
 
 The correlation ID does not replace provider idempotency or read-back reconciliation for external writes.
+
+### Hermes tool approvals
+
+Hermes and Cohub enforce separate approval boundaries. Cohub gates declared
+workflow intent; Hermes gates the concrete tool action selected inside the
+agent turn. Keep both enabled.
+
+When a Hermes run enters `waiting_for_approval`, Cohub reads the redacted
+`approval.request` event, persists the Hermes run ID and exact review payload,
+releases the worker lease, and exposes one payload-hashed Cohub approval. The
+dashboard intentionally maps approval to Hermes `once` and rejection to
+`deny`; it never offers `session` or `always` grants. Resolving the approval
+requeues the same Cohub step and reconciles the same Hermes run instead of
+submitting a duplicate. Cohub cancellation and executor timeout propagate to
+Hermes `/stop`.
+
+Hermes must advertise `run_approval_response` and `approval_events` through
+`/v1/capabilities`. If the SSE approval detail cannot be recovered, Cohub
+fails closed rather than inventing a review payload.
 
 The Hermes response must be a JSON object:
 
@@ -134,7 +154,7 @@ See [`examples/personal-daily-briefing.json`](examples/personal-daily-briefing.j
 | `GET` | `/api/overview` | Dashboard aggregate |
 | `GET` | `/api/tasks` | List tasks |
 | `GET` | `/api/runs` | List runs |
-| `GET` | `/api/runs/{id}` | Full run state and trace |
+| `GET` | `/api/runs/{id}` | Full run, external execution, approval, and event trace |
 | `POST` | `/api/workflows` | Validate and publish an immutable workflow |
 | `POST` | `/api/runs` | Start a workflow run |
 | `POST` | `/api/runs/{id}/tick` | Execute at most one ready step |

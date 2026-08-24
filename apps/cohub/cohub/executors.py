@@ -14,8 +14,29 @@ from .models import ClaimedStep, StepResult
 from .schemas import canonical_json
 
 
+class HermesApiError(RuntimeError):
+    def __init__(self, status_code: int, body: str):
+        self.status_code = status_code
+        self.body = body
+        super().__init__(f"Hermes API returned HTTP {status_code}: {body}")
+
+
 class StepExecutor(Protocol):
     def execute(self, claimed: ClaimedStep) -> StepResult: ...
+
+
+class DurableStepExecutor(Protocol):
+    provider: str
+    timeout: float
+    poll_interval: float
+
+    def require_approval_bridge(self) -> None: ...
+    def submit(self, claimed: ClaimedStep) -> str: ...
+    def get_status(self, external_run_id: str) -> dict[str, Any]: ...
+    def get_approval_event(self, external_run_id: str) -> dict[str, Any]: ...
+    def resolve_approval(self, external_run_id: str, choice: str) -> dict[str, Any]: ...
+    def stop(self, external_run_id: str) -> dict[str, Any]: ...
+    def parse_completed(self, status: dict[str, Any]) -> StepResult: ...
 
 
 class LocalExecutor:
@@ -57,6 +78,8 @@ class LocalExecutor:
 class HermesRunsExecutor:
     """Execute one workflow step through Hermes' documented Runs API."""
 
+    provider = "hermes"
+
     def __init__(
         self,
         base_url: str,
@@ -85,18 +108,39 @@ class HermesRunsExecutor:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "replace")[:1000]
-            raise RuntimeError(f"Hermes API returned HTTP {exc.code}: {body}") from exc
+            raise HermesApiError(exc.code, body) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"Hermes API request failed: {exc.reason}") from exc
 
     def execute(self, claimed: ClaimedStep) -> StepResult:
+        hermes_run_id = self.submit(claimed)
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            status = self.get_status(hermes_run_id)
+            state = status.get("status")
+            if state == "completed":
+                return self._parse_result(status.get("output", ""))
+            if state in {"failed", "cancelled"}:
+                raise RuntimeError(f"Hermes run {state}: {status.get('error') or status.get('output') or 'unknown error'}")
+            if state == "waiting_for_approval":
+                raise RuntimeError("Hermes run requires an approval bridge")
+            time.sleep(self.poll_interval)
+        self.stop(hermes_run_id)
+        raise TimeoutError(f"Hermes run did not finish within {self.timeout} seconds")
+
+    def require_approval_bridge(self) -> None:
+        capabilities = self._request("GET", "/v1/capabilities")
+        features = capabilities.get("features", {})
+        if not features.get("run_approval_response") or not features.get("approval_events"):
+            raise RuntimeError("Hermes Runs API does not advertise approval bridge support")
+
+    def submit(self, claimed: ClaimedStep) -> str:
         correlation_id = f"{claimed.run_id}:{claimed.step_id}:{claimed.attempt}"
-        prompt = self._prompt(claimed)
         started = self._request(
             "POST",
             "/v1/runs",
             {
-                "input": prompt,
+                "input": self._prompt(claimed),
                 "session_id": correlation_id,
                 "instructions": "Return exactly one JSON object matching Cohub's StepResult contract. Do not wrap it in Markdown.",
             },
@@ -104,16 +148,44 @@ class HermesRunsExecutor:
         hermes_run_id = started.get("run_id")
         if not hermes_run_id:
             raise RuntimeError("Hermes API did not return run_id")
-        deadline = time.monotonic() + self.timeout
-        while time.monotonic() < deadline:
-            status = self._request("GET", f"/v1/runs/{hermes_run_id}")
-            state = status.get("status")
-            if state == "completed":
-                return self._parse_result(status.get("output", ""))
-            if state in {"failed", "cancelled"}:
-                raise RuntimeError(f"Hermes run {state}: {status.get('error') or status.get('output') or 'unknown error'}")
-            time.sleep(self.poll_interval)
-        raise TimeoutError(f"Hermes run did not finish within {self.timeout} seconds")
+        return str(hermes_run_id)
+
+    def get_status(self, hermes_run_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/v1/runs/{hermes_run_id}")
+
+    def get_approval_event(self, hermes_run_id: str) -> dict[str, Any]:
+        """Read the queued, redacted approval request from Hermes' SSE stream."""
+
+        request = urllib.request.Request(
+            f"{self.base_url}/v1/runs/{hermes_run_id}/events",
+            headers={"Authorization": f"Bearer {self.api_key}", "Accept": "text/event-stream"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=min(self.timeout, 30)) as response:
+                event_name = ""
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", "replace").rstrip("\r\n")
+                    if line.startswith("event:"):
+                        event_name = line[6:].strip()
+                    elif line.startswith("data:"):
+                        event = json.loads(line[5:].strip())
+                        if event_name == "approval.request" or event.get("event") == "approval.request":
+                            return event
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Hermes approval event could not be recovered") from exc
+        raise RuntimeError("Hermes approval event could not be recovered")
+
+    def resolve_approval(self, hermes_run_id: str, choice: str) -> dict[str, Any]:
+        if choice not in {"once", "session", "always", "deny"}:
+            raise ValueError(f"unsupported Hermes approval choice: {choice}")
+        return self._request("POST", f"/v1/runs/{hermes_run_id}/approval", {"choice": choice})
+
+    def stop(self, hermes_run_id: str) -> dict[str, Any]:
+        return self._request("POST", f"/v1/runs/{hermes_run_id}/stop", {})
+
+    def parse_completed(self, status: dict[str, Any]) -> StepResult:
+        return self._parse_result(status.get("output", ""))
 
     @staticmethod
     def _prompt(claimed: ClaimedStep) -> str:
@@ -154,6 +226,14 @@ class HermesRunsExecutor:
         # Models frequently return the bare output object rather than the
         # documented {status, output, route, reason} envelope. Treat a dict
         # without an "output" key as the output itself instead of dropping it.
+        if "output" not in value and value.get("status") in {"completed", "failed", "cancelled"}:
+            return StepResult(
+                status=str(value["status"]),
+                output={},
+                route=value.get("route"),
+                reason=value.get("reason"),
+                artifacts=tuple(value.get("artifacts", [])),
+            )
         if "output" not in value:
             return StepResult(output=value)
         if not isinstance(value["output"], dict):

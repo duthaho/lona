@@ -89,7 +89,7 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 
 ## Cohub personal coworker
 
-`./deploy.sh hermes` starts Cohub alongside Hermes. Cohub owns deterministic workflow routing, retries, leases, payload-bound human approvals, artifacts, and append-only run traces; Hermes continues to own reasoning, tools, skills, memory, browser automation, models, and messaging.
+`./deploy.sh hermes` starts Cohub alongside Hermes. Cohub owns deterministic workflow routing, retries, leases, payload-bound human approvals, artifacts, and append-only run traces; Hermes continues to own reasoning, tools, skills, memory, browser automation, models, and messaging. Hermes tool approvals are bridged into Cohub as durable, one-shot review records and resume the same Hermes run after a decision.
 
 The services communicate only on the private Compose network. Hermes' Runs API port `8642` is **not** published to the host. Cohub itself stays on loopback by default:
 

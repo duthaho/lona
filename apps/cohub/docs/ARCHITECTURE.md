@@ -27,6 +27,7 @@ Dashboard / API / Hermes tools
 - `runs`: one execution pinned to one workflow version.
 - `steps`: attempts, leases, outputs, routes, and errors.
 - `approvals`: exact payload plus SHA-256, decision, and note.
+- `external_executions`: durable provider run ID, attempt, status, and last error.
 - `artifacts`: relative path, content hash, and size.
 - `events`: append-only monotonic sequence per run.
 
@@ -65,13 +66,35 @@ SQLite is the source of truth. After restart:
 
 - Completed steps stay completed.
 - Pending approvals remain pending.
+- Hermes run IDs survive Cohub restart, so waiting steps reconcile the same external run.
 - Expired leases can be reclaimed.
 - A pinned workflow version remains available even after a newer version is published.
 - Artifacts remain on disk and retain content hashes in SQLite.
 
 ## Hermes integration
 
-The plugin exposes deterministic operations as Hermes tools. The Runs API executor submits one step at a time with an idempotency key and a strict JSON response contract. This preserves Cohub control-flow ownership while allowing Hermes to use its full model, skill, tool, browser, and messaging environment.
+The plugin exposes deterministic operations as Hermes tools. The Runs API executor submits one step at a time with a stable correlation session and a strict JSON response contract. The returned Hermes run ID is persisted before Cohub waits for completion.
+
+Hermes tool approvals are bridged as a durable external-run state machine:
+
+```text
+submit Hermes run → persist external_run_id → reconcile status
+                                             ├─ completed → complete Cohub step
+                                             ├─ failed → declared retry/failure policy
+                                             └─ waiting_for_approval
+                                                    ↓
+                                      consume redacted SSE approval.request
+                                                    ↓
+                                      payload-hashed Cohub approval
+                                                    ↓
+                                      once/deny → same Hermes run → reconcile
+```
+
+Polling exposes that a run is waiting, but the reviewable approval details are
+only available from Hermes' SSE event stream. Cohub therefore never fabricates
+approval details after a missed event. Worker leases are released while the
+operator decides. Duplicate local resolution is idempotent, and a Hermes 409
+is accepted only after status confirms that the run is no longer waiting.
 
 ## Dashboard boundary
 

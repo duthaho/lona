@@ -65,6 +65,32 @@ class CohubStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_run(run["id"])["status"], "paused")
         self.assertEqual(self.store.list_events(run["id"])[-1]["type"], "run.paused")
 
+    def test_persists_external_execution_for_restart_without_duplicate_submission(self):
+        published = self.store.publish_workflow(WORKFLOW)
+        task = self.store.create_task("External execution")
+        run = self.store.create_run(task["id"], published, {})
+        record = self.store.create_external_execution(
+            run["id"], "collect", 1, "hermes", "hermes-run-1"
+        )
+        self.assertEqual(record["status"], "running")
+
+        restarted = CohubStore(Path(self.temp.name) / "cohub.db")
+        recovered = restarted.get_external_execution(run["id"], "collect", 1)
+        self.assertEqual(recovered["external_run_id"], "hermes-run-1")
+        same = restarted.create_external_execution(
+            run["id"], "collect", 1, "hermes", "hermes-run-2"
+        )
+        self.assertEqual(same["external_run_id"], "hermes-run-1")
+
+        updated = restarted.update_external_execution(
+            run["id"], "collect", 1, "waiting_for_approval"
+        )
+        self.assertEqual(updated["status"], "waiting_for_approval")
+        self.assertEqual(
+            [item["external_run_id"] for item in restarted.list_active_external_executions(run["id"])],
+            ["hermes-run-1"],
+        )
+
     def test_persists_step_approval_and_artifact_records(self):
         published = self.store.publish_workflow(WORKFLOW)
         task = self.store.create_task("Records")

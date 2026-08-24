@@ -104,6 +104,21 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS external_executions (
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    step_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL,
+    provider TEXT NOT NULL,
+    external_run_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY(run_id, step_id, attempt),
+    UNIQUE(provider, external_run_id)
+);
+CREATE INDEX IF NOT EXISTS external_executions_status ON external_executions(status, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -362,6 +377,132 @@ class CohubStore:
             self._event(connection, row["run_id"], f"approval.{decision}", {"approval_id": approval_id, "note": note}, row["step_id"])
             return _decode(connection.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone(), ("payload_json",))  # type: ignore[return-value]
 
+    def checkpoint_external_approval(
+        self,
+        run_id: str,
+        step_id: str,
+        attempt: int,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Atomically persist the review payload and release the worker lease."""
+
+        import hashlib
+
+        now = utc_now()
+        payload_json = canonical_json(payload)
+        payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        with self.connection() as connection:
+            external = connection.execute(
+                "SELECT 1 FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            if not external:
+                raise KeyError(f"external execution not found: {run_id}/{step_id}/{attempt}")
+            connection.execute(
+                """UPDATE external_executions SET status='waiting_for_approval',updated_at=?
+                   WHERE run_id=? AND step_id=? AND attempt=?""",
+                (now, run_id, step_id, int(attempt)),
+            )
+            connection.execute(
+                """UPDATE steps SET status='waiting_for_human',lease_owner=NULL,
+                   lease_expires_at=NULL,updated_at=? WHERE run_id=? AND step_id=?""",
+                (now, run_id, step_id),
+            )
+            row = connection.execute(
+                """SELECT * FROM approvals WHERE run_id=? AND step_id=?
+                   AND status='pending' AND payload_hash=?""",
+                (run_id, step_id, payload_hash),
+            ).fetchone()
+            if row is None:
+                approval_id = _id("approval")
+                connection.execute(
+                    """INSERT INTO approvals(id,run_id,step_id,status,payload_json,payload_hash,created_at)
+                       VALUES(?,?,?,'pending',?,?,?)""",
+                    (approval_id, run_id, step_id, payload_json, payload_hash, now),
+                )
+                self._event(
+                    connection,
+                    run_id,
+                    "approval.requested",
+                    {"approval_id": approval_id, "payload_hash": payload_hash},
+                    step_id,
+                )
+                row = connection.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+            connection.execute(
+                "UPDATE runs SET status='waiting_for_human',error=NULL,updated_at=? WHERE id=?",
+                (now, run_id),
+            )
+            connection.execute(
+                "UPDATE tasks SET status='waiting_for_human',updated_at=? WHERE id=(SELECT task_id FROM runs WHERE id=?)",
+                (now, run_id),
+            )
+            self._event(
+                connection,
+                run_id,
+                "external_approval.requested",
+                {"step_id": step_id, "approval_id": row["id"]},
+                step_id,
+            )
+            return _decode(row, ("payload_json",))  # type: ignore[return-value]
+
+    def resume_external_after_approval(
+        self,
+        approval_id: str,
+        decision: str,
+        note: str | None,
+        attempt: int,
+        choice: str,
+    ) -> dict[str, Any]:
+        """Atomically resolve local approval and requeue the same external run."""
+
+        now = utc_now()
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+            if not row:
+                raise KeyError(f"approval not found: {approval_id}")
+            if row["status"] != "pending":
+                if row["status"] == decision:
+                    return _decode(row, ("payload_json",))  # type: ignore[return-value]
+                raise ValueError(f"approval already resolved as {row['status']}")
+            connection.execute(
+                "UPDATE approvals SET status=?,decision_note=?,resolved_at=? WHERE id=?",
+                (decision, note, now, approval_id),
+            )
+            connection.execute(
+                """UPDATE external_executions SET status='running',last_error=NULL,updated_at=?
+                   WHERE run_id=? AND step_id=? AND attempt=?""",
+                (now, row["run_id"], row["step_id"], int(attempt)),
+            )
+            connection.execute(
+                """UPDATE steps SET status='ready',error=NULL,lease_owner=NULL,
+                   lease_expires_at=NULL,updated_at=? WHERE run_id=? AND step_id=?""",
+                (now, row["run_id"], row["step_id"]),
+            )
+            connection.execute(
+                "UPDATE runs SET status='running',error=NULL,updated_at=? WHERE id=?",
+                (now, row["run_id"]),
+            )
+            connection.execute(
+                "UPDATE tasks SET status='running',updated_at=? WHERE id=(SELECT task_id FROM runs WHERE id=?)",
+                (now, row["run_id"]),
+            )
+            self._event(
+                connection,
+                row["run_id"],
+                f"approval.{decision}",
+                {"approval_id": approval_id, "note": note},
+                row["step_id"],
+            )
+            self._event(
+                connection,
+                row["run_id"],
+                "external_approval.resolved",
+                {"step_id": row["step_id"], "approval_id": approval_id, "choice": choice},
+                row["step_id"],
+            )
+            resolved = connection.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+            return _decode(resolved, ("payload_json",))  # type: ignore[return-value]
+
     def get_approval(self, approval_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
             row = connection.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
@@ -379,6 +520,92 @@ class CohubStore:
         with self.connection() as connection:
             rows = connection.execute(query, params).fetchall()
             return [_decode(row, ("payload_json",)) for row in rows]  # type: ignore[misc]
+
+    def create_external_execution(
+        self,
+        run_id: str,
+        step_id: str,
+        attempt: int,
+        provider: str,
+        external_run_id: str,
+    ) -> dict[str, Any]:
+        """Persist an external run once so restart cannot submit a duplicate."""
+
+        now = utc_now()
+        with self.connection() as connection:
+            existing = connection.execute(
+                "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            if existing:
+                return dict(existing)
+            connection.execute(
+                """INSERT INTO external_executions(
+                       run_id,step_id,attempt,provider,external_run_id,status,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,'running',?,?)""",
+                (run_id, step_id, int(attempt), provider, external_run_id, now, now),
+            )
+            self._event(
+                connection,
+                run_id,
+                "external_run.started",
+                {"provider": provider, "external_run_id": external_run_id, "attempt": int(attempt)},
+                step_id,
+            )
+            row = connection.execute(
+                "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            return dict(row)
+
+    def get_external_execution(self, run_id: str, step_id: str, attempt: int) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_external_execution(
+        self,
+        run_id: str,
+        step_id: str,
+        attempt: int,
+        status: str,
+        *,
+        last_error: str | None = None,
+    ) -> dict[str, Any]:
+        with self.connection() as connection:
+            updated = connection.execute(
+                """UPDATE external_executions SET status=?,last_error=?,updated_at=?
+                   WHERE run_id=? AND step_id=? AND attempt=?""",
+                (status, last_error, utc_now(), run_id, step_id, int(attempt)),
+            )
+            if updated.rowcount != 1:
+                raise KeyError(f"external execution not found: {run_id}/{step_id}/{attempt}")
+            self._event(
+                connection,
+                run_id,
+                f"external_run.{status}",
+                {"attempt": int(attempt), "error": last_error},
+                step_id,
+            )
+            row = connection.execute(
+                "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            return dict(row)
+
+    def list_external_executions(self, run_id: str, *, active_only: bool = False) -> list[dict[str, Any]]:
+        query = "SELECT * FROM external_executions WHERE run_id=?"
+        if active_only:
+            query += " AND status NOT IN ('completed','failed','cancelled')"
+        query += " ORDER BY created_at"
+        with self.connection() as connection:
+            return [dict(row) for row in connection.execute(query, (run_id,)).fetchall()]
+
+    def list_active_external_executions(self, run_id: str) -> list[dict[str, Any]]:
+        return self.list_external_executions(run_id, active_only=True)
 
     def create_artifact(self, run_id: str, step_id: str, path: str, sha256: str, size: int) -> dict[str, Any]:
         artifact_id = _id("artifact")
