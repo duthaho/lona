@@ -9,6 +9,9 @@ export type Run = {
   created_at?: string;
   updated_at?: string;
   completed_at?: string;
+  requested_provider?: string;
+  requested_model?: string;
+  usage?: Record<string, number>;
 };
 
 export type Task = {
@@ -53,7 +56,25 @@ export type Workflow = {
 
 export type Artifact = { path: string; sha256: string; size: number };
 export type Step = { step_id: string; status: string; attempt: number; reason?: string; error?: string };
-export type ExternalExecution = { external_run_id: string; provider: string; status: string; step_id: string; last_error?: string };
+export type ExternalExecution = {
+  external_run_id: string;
+  provider: string;
+  status: string;
+  step_id: string;
+  requested_provider?: string;
+  requested_model?: string;
+  reported_provider?: string;
+  reported_model?: string;
+  usage?: Record<string, number>;
+  last_error?: string;
+};
+
+export type ModelOption = { id: string; featured?: boolean; pricing?: Record<string, number | string> };
+export type ModelProvider = { provider: string; label: string; models: ModelOption[] };
+export type ModelCatalog = {
+  current: { provider: string; model: string };
+  providers: ModelProvider[];
+};
 
 export type RunDetail = Run & {
   steps: Step[];

@@ -92,6 +92,8 @@ class HermesRunsExecutor:
         self.api_key = api_key
         self.poll_interval = poll_interval
         self.timeout = timeout
+        self._model_catalog: dict[str, Any] | None = None
+        self._model_catalog_at = 0.0
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         data = canonical_json(payload).encode("utf-8") if payload is not None else None
@@ -136,19 +138,65 @@ class HermesRunsExecutor:
 
     def submit(self, claimed: ClaimedStep) -> str:
         correlation_id = f"{claimed.run_id}:{claimed.step_id}:{claimed.attempt}"
-        started = self._request(
-            "POST",
-            "/v1/runs",
-            {
-                "input": self._prompt(claimed),
-                "session_id": correlation_id,
-                "instructions": "Return exactly one JSON object matching Cohub's StepResult contract. Do not wrap it in Markdown.",
-            },
-        )
+        payload = {
+            "input": self._prompt(claimed),
+            "session_id": correlation_id,
+            "instructions": "Return exactly one JSON object matching Cohub's StepResult contract. Do not wrap it in Markdown.",
+        }
+        payload.update(getattr(claimed, "execution_selection", {}) or {})
+        started = self._request("POST", "/v1/runs", payload)
         hermes_run_id = started.get("run_id")
         if not hermes_run_id:
             raise RuntimeError("Hermes API did not return run_id")
         return str(hermes_run_id)
+
+    def get_model_catalog(self, refresh: bool = False) -> dict[str, Any]:
+        """Return a credential-free catalog of authenticated Hermes models."""
+
+        age = time.monotonic() - self._model_catalog_at
+        if self._model_catalog is not None and not refresh and age < 60:
+            return self._model_catalog
+        suffix = "true" if refresh else "false"
+        raw = self._request("GET", f"/api/model/options?refresh={suffix}")
+        providers = []
+        for row in raw.get("providers", []):
+            if not isinstance(row, dict) or row.get("authenticated") is not True:
+                continue
+            provider = str(row.get("slug") or "").strip()
+            if not provider:
+                continue
+            featured = {str(item) for item in row.get("featured_models", [])}
+            pricing_value = row.get("pricing")
+            capabilities_value = row.get("capabilities")
+            pricing: dict[str, Any] = pricing_value if isinstance(pricing_value, dict) else {}
+            capabilities: dict[str, Any] = capabilities_value if isinstance(capabilities_value, dict) else {}
+            models = []
+            for item in row.get("models", []):
+                model_id = str(item.get("id") if isinstance(item, dict) else item).strip()
+                if not model_id:
+                    continue
+                model = {"id": model_id, "featured": model_id in featured}
+                if isinstance(pricing.get(model_id), dict):
+                    model["pricing"] = pricing[model_id]
+                if isinstance(capabilities.get(model_id), dict):
+                    model["capabilities"] = capabilities[model_id]
+                models.append(model)
+            if models:
+                providers.append({
+                    "provider": provider,
+                    "label": str(row.get("name") or row.get("label") or provider),
+                    "models": models,
+                })
+        catalog = {
+            "current": {
+                "provider": str(raw.get("provider") or ""),
+                "model": str(raw.get("model") or ""),
+            },
+            "providers": providers,
+        }
+        self._model_catalog = catalog
+        self._model_catalog_at = time.monotonic()
+        return catalog
 
     def get_status(self, hermes_run_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/runs/{hermes_run_id}")

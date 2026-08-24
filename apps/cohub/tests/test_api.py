@@ -37,7 +37,25 @@ class ApiTests(unittest.TestCase):
         store = CohubStore(root / "cohub.db")
         engine = WorkflowEngine(store, root / "artifacts")
         worker = WorkerService(engine, LocalExecutor(root / "artifacts"), worker_id="api-worker")
-        self.server = create_server("127.0.0.1", 0, store, engine, worker, static_dir=Path("cohub/static"), api_token="test-token")
+        self.server = create_server(
+            "127.0.0.1",
+            0,
+            store,
+            engine,
+            worker,
+            static_dir=Path("cohub/static"),
+            api_token="test-token",
+            model_catalog=lambda refresh=False: {
+                "current": {"provider": "openrouter", "model": "free/default"},
+                "providers": [
+                    {
+                        "provider": "openai-codex",
+                        "label": "OpenAI Codex",
+                        "models": [{"id": "gpt-5.6", "featured": True}],
+                    }
+                ],
+            },
+        )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.addCleanup(self.server.server_close)
@@ -86,6 +104,35 @@ class ApiTests(unittest.TestCase):
         status, detail = self.request("GET", f"/api/runs/{run_id}")
         self.assertEqual(detail["status"], "completed")
         self.assertEqual(len(detail["artifacts"]), 1)
+
+    def test_lists_models_and_persists_an_explicit_run_selection(self):
+        self.request("POST", "/api/workflows", WORKFLOW)
+        status, catalog = self.request("GET", "/api/hermes/models")
+        self.assertEqual(status, 200)
+        self.assertEqual(catalog["providers"][0]["provider"], "openai-codex")
+
+        status, run = self.request(
+            "POST",
+            "/api/runs",
+            {
+                "workflow": "api-demo",
+                "title": "Paid model run",
+                "input": {},
+                "provider": "openai-codex",
+                "model": "gpt-5.6",
+            },
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(run["requested_provider"], "openai-codex")
+        self.assertEqual(run["requested_model"], "gpt-5.6")
+
+        with self.assertRaises(urllib.error.HTTPError) as context:
+            self.request(
+                "POST",
+                "/api/runs",
+                {"workflow": "api-demo", "input": {}, "provider": "openai-codex", "model": "missing"},
+            )
+        self.assertEqual(context.exception.code, 400)
 
     def test_overview_and_static_dashboard(self):
         self.request("POST", "/api/workflows", WORKFLOW)

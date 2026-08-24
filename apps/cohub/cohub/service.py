@@ -72,12 +72,15 @@ class WorkerService:
         if external is None:
             executor.require_approval_bridge()  # type: ignore[attr-defined]
             external_id = executor.submit(claimed)  # type: ignore[attr-defined]
+            selection = getattr(claimed, "execution_selection", {}) or {}
             external = store.create_external_execution(
                 claimed.run_id,
                 claimed.step_id,
                 claimed.attempt,
                 str(getattr(executor, "provider", "hermes")),
                 external_id,
+                requested_provider=selection.get("provider"),
+                requested_model=selection.get("model"),
             )
         external_id = external["external_run_id"]
         deadline = time.monotonic() + float(getattr(executor, "timeout", 300))
@@ -87,6 +90,14 @@ class WorkerService:
             status = executor.get_status(external_id)  # type: ignore[attr-defined]
             state = status.get("status")
             if state == "completed":
+                store.record_external_result(
+                    claimed.run_id,
+                    claimed.step_id,
+                    claimed.attempt,
+                    reported_provider=status.get("provider") if isinstance(status.get("provider"), str) else None,
+                    reported_model=status.get("model") if isinstance(status.get("model"), str) else None,
+                    usage=status.get("usage") if isinstance(status.get("usage"), dict) else None,
+                )
                 result = executor.parse_completed(status)  # type: ignore[attr-defined]
                 if result.status != "completed":
                     store.update_external_execution(

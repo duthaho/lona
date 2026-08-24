@@ -192,6 +192,7 @@ td:last-child { width: 35px; padding-left: 0; color: var(--faint); }
 .modal-header h2 { margin: 0; font-size: 19px; font-weight: 550; }
 .form-stack { display: grid; gap: 16px; }
 .form-stack label, .approval-review > label { display: grid; gap: 7px; color: var(--text-2); font-size: 10px; font-weight: 550; }
+.field-help { color: var(--faint); font-size: 9px; font-weight: 400; line-height: 1.45; }
 label > span { margin-left: 5px; color: var(--faint); font-weight: 400; }
 input, select, textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 7px; background: rgba(0,0,0,.23); }
 input, select { height: 39px; padding: 0 11px; }
@@ -230,6 +231,11 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 .run-summary { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 12px; padding-bottom: 17px; }
 .run-summary > span:nth-child(2) { color: var(--muted); font-size: 10px; }
 .run-summary > small { grid-column: 2; color: var(--faint); font-size: 9px; }
+.model-summary { display: flex; align-items: center; gap: 10px; margin-bottom: 13px; padding: 11px 12px; border: 1px solid rgba(124, 92, 255, .25); border-radius: 8px; background: var(--accent-soft); color: var(--accent-2); }
+.model-summary div { display: grid; gap: 2px; min-width: 0; }
+.model-summary span, .model-summary small { color: var(--muted); font-size: 9px; }
+.model-summary strong { overflow: hidden; color: var(--text); font: 10px "JetBrains Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.model-summary small { margin-left: auto; white-space: nowrap; }
 .run-toolbar { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .run-toolbar .danger-icon { margin-left: auto; }
 .drawer-section { margin-top: 22px; }

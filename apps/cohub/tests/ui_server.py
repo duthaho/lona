@@ -29,6 +29,17 @@ WORKFLOW = {
     },
 }
 
+MODEL_CATALOG = {
+    "current": {"provider": "openrouter", "model": "free/default"},
+    "providers": [
+        {
+            "provider": "openai-codex",
+            "label": "OpenAI Codex",
+            "models": [{"id": "gpt-5.6", "featured": True}],
+        }
+    ],
+}
+
 
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="cohub-ui-") as temporary:
@@ -41,7 +52,15 @@ def main() -> None:
         approval = engine.status(completed["id"])["approvals"][0]
         engine.resolve_approval(approval["id"], "approved", expected_payload_hash=approval["payload_hash"])
         static_dir = Path(__file__).resolve().parents[1] / "cohub" / "static"
-        server = create_server("127.0.0.1", 18765, store, engine, worker, static_dir=static_dir)
+        server = create_server(
+            "127.0.0.1",
+            18765,
+            store,
+            engine,
+            worker,
+            static_dir=static_dir,
+            model_catalog=lambda refresh=False: MODEL_CATALOG,
+        )
         try:
             server.serve_forever()
         finally:

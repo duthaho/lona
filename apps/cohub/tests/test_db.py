@@ -69,27 +69,74 @@ class CohubStoreTests(unittest.TestCase):
         published = self.store.publish_workflow(WORKFLOW)
         task = self.store.create_task("External execution")
         run = self.store.create_run(task["id"], published, {})
-        record = self.store.create_external_execution(
-            run["id"], "collect", 1, "hermes", "hermes-run-1"
-        )
+        record = self.store.create_external_execution(run["id"], "collect", 1, "hermes", "hermes-run-1")
         self.assertEqual(record["status"], "running")
 
         restarted = CohubStore(Path(self.temp.name) / "cohub.db")
         recovered = restarted.get_external_execution(run["id"], "collect", 1)
         self.assertEqual(recovered["external_run_id"], "hermes-run-1")
-        same = restarted.create_external_execution(
-            run["id"], "collect", 1, "hermes", "hermes-run-2"
-        )
+        same = restarted.create_external_execution(run["id"], "collect", 1, "hermes", "hermes-run-2")
         self.assertEqual(same["external_run_id"], "hermes-run-1")
 
-        updated = restarted.update_external_execution(
-            run["id"], "collect", 1, "waiting_for_approval"
-        )
+        updated = restarted.update_external_execution(run["id"], "collect", 1, "waiting_for_approval")
         self.assertEqual(updated["status"], "waiting_for_approval")
         self.assertEqual(
             [item["external_run_id"] for item in restarted.list_active_external_executions(run["id"])],
             ["hermes-run-1"],
         )
+
+    def test_persists_run_model_selection_and_idempotent_usage(self):
+        published = self.store.publish_workflow(WORKFLOW)
+        task = self.store.create_task("Model routed run")
+        run = self.store.create_run(
+            task["id"],
+            published,
+            {},
+            requested_provider="openai-codex",
+            requested_model="gpt-5.6",
+        )
+        self.assertEqual(run["requested_provider"], "openai-codex")
+        self.assertEqual(run["requested_model"], "gpt-5.6")
+
+        self.store.create_external_execution(
+            run["id"],
+            "work",
+            1,
+            "hermes",
+            "hermes-model-1",
+            requested_provider="openai-codex",
+            requested_model="gpt-5.6",
+        )
+        usage = {"input_tokens": 120, "output_tokens": 30, "total_tokens": 150}
+        first = self.store.record_external_result(
+            run["id"], "work", 1, reported_provider="openai-codex", reported_model="gpt-5.6", usage=usage
+        )
+        second = self.store.record_external_result(
+            run["id"], "work", 1, reported_provider="openai-codex", reported_model="gpt-5.6", usage=usage
+        )
+        self.assertEqual(first["reported_provider"], "openai-codex")
+        self.assertEqual(first["usage"], usage)
+        self.assertEqual(second["usage"], usage)
+
+        restarted = CohubStore(Path(self.temp.name) / "cohub.db")
+        loaded = restarted.get_run(run["id"])
+        self.assertEqual(loaded["requested_model"], "gpt-5.6")
+        self.assertEqual(loaded["usage"], usage)
+
+    def test_additive_model_columns_migrate_an_existing_database(self):
+        with self.store.connection() as connection:
+            for column in ("usage_json", "requested_model", "requested_provider"):
+                connection.execute(f"ALTER TABLE runs DROP COLUMN {column}")
+            for column in ("usage_json", "reported_model", "reported_provider", "requested_model", "requested_provider"):
+                connection.execute(f"ALTER TABLE external_executions DROP COLUMN {column}")
+
+        CohubStore(Path(self.temp.name) / "cohub.db")
+
+        with self.store.connection() as connection:
+            run_columns = {row["name"] for row in connection.execute("PRAGMA table_info(runs)")}
+            external_columns = {row["name"] for row in connection.execute("PRAGMA table_info(external_executions)")}
+        self.assertTrue({"requested_provider", "requested_model", "usage_json"} <= run_columns)
+        self.assertTrue({"requested_provider", "requested_model", "reported_provider", "reported_model", "usage_json"} <= external_columns)
 
     def test_persists_step_approval_and_artifact_records(self):
         published = self.store.publish_workflow(WORKFLOW)

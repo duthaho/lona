@@ -71,6 +71,12 @@ Each claimed step is submitted with a stable Hermes `session_id` for correlation
 
 The correlation ID does not replace provider idempotency or read-back reconciliation for external writes.
 
+### Model routing
+
+The dashboard's **New run** form can use the current Hermes default or select an authenticated provider/model for the entire run. Cohub fetches `/api/model/options` server-side and exposes only a credential-free normalized catalog through its token-protected `/api/hermes/models` endpoint; the browser never receives the Hermes API key.
+
+Explicit provider/model values are validated together and persisted before any step is submitted. The selected values are reused after process restarts, and Cohub records the provider, model, and token usage reported by Hermes without inferring missing metadata. If the catalog is unavailable, default runs remain available while explicit overrides fail closed.
+
 ### Hermes tool approvals
 
 Hermes and Cohub enforce separate approval boundaries. Cohub gates declared

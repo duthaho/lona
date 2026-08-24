@@ -71,7 +71,16 @@ def main() -> None:
         print(json.dumps(status, indent=2))
         return
     static_dir = Path(__file__).resolve().parent / "static"
-    server = create_server(args.host, args.port, store, engine, worker, static_dir=static_dir, api_token=args.api_token)
+    server = create_server(
+        args.host,
+        args.port,
+        store,
+        engine,
+        worker,
+        static_dir=static_dir,
+        api_token=args.api_token,
+        model_catalog=getattr(worker.executor, "get_model_catalog", None),
+    )
     print(f"Cohub dashboard: http://{args.host}:{server.server_port}")
     print(f"Data directory: {args.data_dir.resolve()}")
     try:
