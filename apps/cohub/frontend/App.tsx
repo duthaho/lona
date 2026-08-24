@@ -5,7 +5,7 @@ import {
   Menu, Pause, Play, Plus, RefreshCw, Search, ShieldCheck, Square, TerminalSquare,
   X, XCircle, Zap,
 } from "lucide-react";
-import type { Approval, Overview, Run, RunDetail, Task, Workflow } from "./types";
+import type { Approval, ModelCatalog, Overview, Run, RunDetail, Task, Workflow } from "./types";
 import { approvalSummary, filterRuns, relativeTime, terminalStatuses, titleCase } from "./utils";
 import "./styles.css";
 
@@ -91,6 +91,7 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
   const [error, setError] = useState("");
@@ -122,6 +123,8 @@ function App() {
       setOverview(overviewData); setRuns(allRuns.runs); setTasks(allTasks.tasks);
       setWorkflows(allWorkflows.workflows); setApprovals(pending.approvals);
       setSelectedWorkflow((current) => current || allWorkflows.workflows[0] || null);
+      try { setModelCatalog(await request<ModelCatalog>("/api/hermes/models", token)); }
+      catch { setModelCatalog(null); }
       setAuthRequired(false); setError("");
     } catch (caught) {
       const apiError = caught as Error & { status?: number };
@@ -191,7 +194,7 @@ function App() {
     </main>
 
     <RunDrawer run={selectedRun} loading={runLoading} onClose={() => setSelectedRun(null)} onAction={runAction} />
-    <NewRunModal open={modal === "new-run"} workflows={workflows} preferred={selectedWorkflow?.name || ""} token={token} onClose={() => setModal(null)} onCreated={async (run) => { setModal(null); notify("Workflow run started"); await loadData(true); navigate("runs"); await openRun(run); }} />
+    <NewRunModal open={modal === "new-run"} workflows={workflows} models={modelCatalog} preferred={selectedWorkflow?.name || ""} token={token} onClose={() => setModal(null)} onCreated={async (run) => { setModal(null); notify("Workflow run started"); await loadData(true); navigate("runs"); await openRun(run); }} />
     <PublishModal open={modal === "publish"} token={token} onClose={() => setModal(null)} onPublished={async () => { setModal(null); notify("Workflow published"); await loadData(true); }} />
     <ApprovalModal approval={selectedApproval} open={modal === "approval"} token={token} onClose={() => { setModal(null); setSelectedApproval(null); }} onResolved={async (decision) => { setModal(null); setSelectedApproval(null); notify(decision === "approve" ? "Approved once" : "Action denied"); await loadData(true); }} />
     <div className={`toast ${toast ? "toast-visible" : ""}`} role="status">{toast}</div>
@@ -231,11 +234,41 @@ function WorkflowsView({ workflows, selected, onSelect, onRun, onPublish }: { wo
   </section>;
 }
 
-function NewRunModal({ open, workflows, preferred, token, onClose, onCreated }: { open: boolean; workflows: Workflow[]; preferred: string; token: string; onClose: () => void; onCreated: (run: Run) => void }) {
-  const [workflow, setWorkflow] = useState(""); const [title, setTitle] = useState(""); const [input, setInput] = useState("{}"); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) setWorkflow(preferred || workflows[0]?.name || ""); }, [open, preferred, workflows]);
-  const submit = async (event: React.FormEvent) => { event.preventDefault(); setBusy(true); setError(""); try { const parsed = JSON.parse(input); const run = await request<Run>("/api/runs", token, { method: "POST", body: JSON.stringify({ workflow, title, input: parsed }) }); onCreated(run); } catch (caught) { setError((caught as Error).message); } finally { setBusy(false); } };
-  return <ModalShell open={open} title="Delegate a workflow" eyebrow="New run" onClose={onClose}><form onSubmit={submit} className="form-stack"><label>Workflow<select value={workflow} onChange={(event) => setWorkflow(event.target.value)} required>{workflows.map((item) => <option key={item.fingerprint} value={item.name}>{item.name} · v{item.version}</option>)}</select></label><label>Task title <span>Optional</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What outcome do you want?" /></label><label>Input <span>JSON object</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={7} spellCheck={false} /></label>{error && <p className="form-error">{error}</p>}<footer><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !workflow}>{busy ? "Starting…" : "Start run"}<ArrowRight size={15} /></button></footer></form></ModalShell>;
+function NewRunModal({ open, workflows, models, preferred, token, onClose, onCreated }: { open: boolean; workflows: Workflow[]; models: ModelCatalog | null; preferred: string; token: string; onClose: () => void; onCreated: (run: Run) => void }) {
+  const [workflow, setWorkflow] = useState("");
+  const [title, setTitle] = useState("");
+  const [input, setInput] = useState("{}");
+  const [modelChoice, setModelChoice] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setWorkflow(preferred || workflows[0]?.name || "");
+      setModelChoice("");
+    }
+  }, [open, preferred, workflows]);
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault(); setBusy(true); setError("");
+    try {
+      const parsed = JSON.parse(input);
+      const selection = modelChoice ? JSON.parse(modelChoice) as [string, string] : null;
+      const body = { workflow, title, input: parsed, ...(selection ? { provider: selection[0], model: selection[1] } : {}) };
+      const run = await request<Run>("/api/runs", token, { method: "POST", body: JSON.stringify(body) });
+      onCreated(run);
+    } catch (caught) { setError((caught as Error).message); }
+    finally { setBusy(false); }
+  };
+  const current = models?.current;
+  return <ModalShell open={open} title="Delegate a workflow" eyebrow="New run" onClose={onClose}><form onSubmit={submit} className="form-stack">
+    <label>Workflow<select value={workflow} onChange={(event) => setWorkflow(event.target.value)} required>{workflows.map((item) => <option key={item.fingerprint} value={item.name}>{item.name} · v{item.version}</option>)}</select></label>
+    <label>Task title <span>Optional</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What outcome do you want?" /></label>
+    <label>Model<select aria-label="Model" value={modelChoice} onChange={(event) => setModelChoice(event.target.value)}>
+      <option value="">Hermes default{current?.model ? ` · ${current.provider}/${current.model}` : ""}</option>
+      {models?.providers.map((provider) => <optgroup key={provider.provider} label={provider.label}>{provider.models.map((model) => <option key={`${provider.provider}/${model.id}`} value={JSON.stringify([provider.provider, model.id])}>{model.id}{model.featured ? " · Featured" : ""}</option>)}</optgroup>)}
+    </select><small className="field-help">{models ? "Override the Hermes default for every AI step in this run." : "Model catalog unavailable; this run will use the Hermes default."}</small></label>
+    <label>Input <span>JSON object</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={7} spellCheck={false} /></label>
+    {error && <p className="form-error">{error}</p>}<footer><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !workflow}>{busy ? "Starting…" : "Start run"}<ArrowRight size={15} /></button></footer>
+  </form></ModalShell>;
 }
 
 function PublishModal({ open, token, onClose, onPublished }: { open: boolean; token: string; onClose: () => void; onPublished: () => void }) {
@@ -254,7 +287,7 @@ function ApprovalModal({ approval, open, token, onClose, onResolved }: { approva
 
 function RunDrawer({ run, loading, onClose, onAction }: { run: RunDetail | null; loading: boolean; onClose: () => void; onAction: (action: "tick" | "pause" | "resume" | "cancel") => void }) {
   if (!run) return null;
-  return <><button className="drawer-scrim" onClick={onClose} aria-label="Close run inspector" /><aside className="run-drawer"><header><div><span className="overline">Run inspector</span><h2>{run.title || run.workflow_name}</h2><p>{run.id}</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header>{loading ? <Skeleton rows={6} /> : <div className="drawer-body"><div className="run-summary"><Status value={run.status} /><span>{run.workflow_name} · Version {run.workflow_version}</span><small>Updated {relativeTime(run.updated_at)}</small></div>{!terminalStatuses.has(run.status) && <div className="run-toolbar"><button className="button primary" onClick={() => onAction("tick")}><Play size={14} /> Run next step</button>{run.status === "paused" ? <button className="button secondary" onClick={() => onAction("resume")}><CirclePlay size={14} /> Resume</button> : <button className="button secondary" onClick={() => onAction("pause")}><Pause size={14} /> Pause</button>}<button className="icon-button danger-icon" onClick={() => onAction("cancel")} title="Cancel run"><Square size={14} /></button></div>}<section className="drawer-section"><div className="section-heading"><h3>Steps</h3><span>{run.steps.length}</span></div><div className="timeline">{run.steps.map((step, index) => <div className="timeline-item" key={step.step_id}><span className={`timeline-dot dot-${step.status}`}>{index + 1}</span><div><strong>{step.step_id}</strong><small>{step.error || step.reason || `Attempt ${step.attempt}`}</small></div><Status value={step.status} /></div>)}</div></section>{Boolean(run.external_executions?.length) && <section className="drawer-section"><div className="section-heading"><h3>Hermes execution</h3></div>{run.external_executions?.map((external) => <div className="external-card" key={external.external_run_id}><Bot size={17} /><div><strong>{external.provider}</strong><code>{external.external_run_id}</code></div><Status value={external.status} /></div>)}</section>}<section className="drawer-section"><div className="section-heading"><h3>Artifacts</h3><span>{run.artifacts.length}</span></div>{run.artifacts.length ? run.artifacts.map((artifact) => <div className="artifact-row" key={artifact.path}><FileOutput size={17} /><div><strong>{artifact.path}</strong><small>{artifact.size} bytes · {artifact.sha256.slice(0, 12)}…</small></div></div>) : <p className="muted-copy">No artifacts were produced by this run.</p>}</section>{run.error && <div className="run-error"><AlertTriangle size={17} /><span>{run.error}</span></div>}</div>}</aside></>;
+  return <><button className="drawer-scrim" onClick={onClose} aria-label="Close run inspector" /><aside className="run-drawer"><header><div><span className="overline">Run inspector</span><h2>{run.title || run.workflow_name}</h2><p>{run.id}</p></div><button className="icon-button" onClick={onClose}><X size={18} /></button></header>{loading ? <Skeleton rows={6} /> : <div className="drawer-body"><div className="run-summary"><Status value={run.status} /><span>{run.workflow_name} · Version {run.workflow_version}</span><small>Updated {relativeTime(run.updated_at)}</small></div>{run.requested_model && <div className="model-summary"><Bot size={16} /><div><span>Selected model</span><strong>{run.requested_provider}/{run.requested_model}</strong></div>{run.usage && <small>{run.usage.total_tokens || 0} tokens</small>}</div>}{!terminalStatuses.has(run.status) && <div className="run-toolbar"><button className="button primary" onClick={() => onAction("tick")}><Play size={14} /> Run next step</button>{run.status === "paused" ? <button className="button secondary" onClick={() => onAction("resume")}><CirclePlay size={14} /> Resume</button> : <button className="button secondary" onClick={() => onAction("pause")}><Pause size={14} /> Pause</button>}<button className="icon-button danger-icon" onClick={() => onAction("cancel")} title="Cancel run"><Square size={14} /></button></div>}<section className="drawer-section"><div className="section-heading"><h3>Steps</h3><span>{run.steps.length}</span></div><div className="timeline">{run.steps.map((step, index) => <div className="timeline-item" key={step.step_id}><span className={`timeline-dot dot-${step.status}`}>{index + 1}</span><div><strong>{step.step_id}</strong><small>{step.error || step.reason || `Attempt ${step.attempt}`}</small></div><Status value={step.status} /></div>)}</div></section>{Boolean(run.external_executions?.length) && <section className="drawer-section"><div className="section-heading"><h3>Hermes execution</h3></div>{run.external_executions?.map((external) => <div className="external-card" key={external.external_run_id}><Bot size={17} /><div><strong>{external.reported_model ? `${external.reported_provider || external.provider}/${external.reported_model}` : external.requested_model ? `${external.requested_provider}/${external.requested_model}` : external.provider}</strong><code>{external.external_run_id}{external.usage?.total_tokens ? ` · ${external.usage.total_tokens} tokens` : ""}</code></div><Status value={external.status} /></div>)}</section>}<section className="drawer-section"><div className="section-heading"><h3>Artifacts</h3><span>{run.artifacts.length}</span></div>{run.artifacts.length ? run.artifacts.map((artifact) => <div className="artifact-row" key={artifact.path}><FileOutput size={17} /><div><strong>{artifact.path}</strong><small>{artifact.size} bytes · {artifact.sha256.slice(0, 12)}…</small></div></div>) : <p className="muted-copy">No artifacts were produced by this run.</p>}</section>{run.error && <div className="run-error"><AlertTriangle size={17} /><span>{run.error}</span></div>}</div>}</aside></>;
 }
 
 export default App;

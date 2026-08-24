@@ -34,12 +34,20 @@ class WorkflowEngine:
         *,
         title: str | None = None,
         version: int | None = None,
+        requested_provider: str | None = None,
+        requested_model: str | None = None,
     ) -> dict[str, Any]:
         workflow = self.store.get_workflow(workflow_name, version)
         if not workflow:
             raise EngineError(f"workflow not found: {workflow_name}")
         task = self.store.create_task(title or workflow_name, input_data)
-        run = self.store.create_run(task["id"], workflow, input_data)
+        run = self.store.create_run(
+            task["id"],
+            workflow,
+            input_data,
+            requested_provider=requested_provider,
+            requested_model=requested_model,
+        )
         self.store.transition_run(run["id"], "running", "run.started", {})
         definition = workflow["definition"]
         self._activate(run["id"], definition["start"], definition)
@@ -221,6 +229,14 @@ class WorkflowEngine:
             workflow=workflow,
             task_input=run["input"],
             dependency_outputs=completed,
+            execution_selection={
+                key: value
+                for key, value in {
+                    "provider": run.get("requested_provider"),
+                    "model": run.get("requested_model"),
+                }.items()
+                if value
+            },
             lease_owner=worker_id,
             lease_expires_at=expires,
         )

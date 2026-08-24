@@ -35,3 +35,14 @@ test("workflow workspace exposes versioned graph and run action", async ({ page 
   await expect(page.getByText("approve", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible();
 });
+
+test("operator can override the Hermes model for a run", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "New run", exact: true }).click();
+  await page.getByLabel("Model").selectOption({ label: "gpt-5.6 · Featured" });
+  await page.getByPlaceholder("What outcome do you want?").fill("Model routed release");
+  await page.getByRole("button", { name: /Start run/ }).click();
+
+  await expect(page.getByRole("heading", { name: "Model routed release" })).toBeVisible();
+  await expect(page.getByText("openai-codex/gpt-5.6")).toBeVisible();
+});

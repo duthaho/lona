@@ -33,5 +33,6 @@ class ClaimedStep:
     workflow: dict[str, Any]
     task_input: dict[str, Any]
     dependency_outputs: dict[str, Any]
+    execution_selection: dict[str, str]
     lease_owner: str
     lease_expires_at: str

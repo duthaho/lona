@@ -9,7 +9,7 @@ import re
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .db import CohubStore
@@ -33,6 +33,7 @@ def create_server(
     *,
     static_dir: str | Path,
     api_token: str = "",
+    model_catalog: Callable[[bool], dict[str, Any]] | None = None,
 ) -> ThreadingHTTPServer:
     root = Path(static_dir).resolve()
 
@@ -96,6 +97,11 @@ def create_server(
                     "tasks": store.list_tasks()[:10],
                 })
                 return
+            if method == "GET" and path == "/api/hermes/models":
+                if model_catalog is None:
+                    raise ApiError(503, "Hermes model catalog is unavailable")
+                self._json(200, model_catalog(False))
+                return
             if method == "GET" and path == "/api/tasks":
                 self._json(200, {"tasks": store.list_tasks()})
                 return
@@ -125,7 +131,33 @@ def create_server(
                 input_data = body.get("input", {})
                 if not isinstance(input_data, dict):
                     raise ApiError(400, "input must be an object")
-                run = engine.start_run(workflow_name, input_data, title=body.get("title"), version=body.get("version"))
+                provider = body.get("provider")
+                model = body.get("model")
+                if (provider is None) != (model is None):
+                    raise ApiError(400, "provider and model must be selected together")
+                if provider is not None:
+                    if not isinstance(provider, str) or not provider.strip():
+                        raise ApiError(400, "provider must be a non-empty string")
+                    if not isinstance(model, str) or not model.strip():
+                        raise ApiError(400, "model must be a non-empty string")
+                    if model_catalog is None:
+                        raise ApiError(400, "explicit model selection is unavailable")
+                    catalog = model_catalog(False)
+                    allowed = {
+                        (item.get("provider"), option.get("id"))
+                        for item in catalog.get("providers", [])
+                        for option in item.get("models", [])
+                    }
+                    if (provider, model) not in allowed:
+                        raise ApiError(400, "selected provider/model is not authenticated in Hermes")
+                run = engine.start_run(
+                    workflow_name,
+                    input_data,
+                    title=body.get("title"),
+                    version=body.get("version"),
+                    requested_provider=provider,
+                    requested_model=model,
+                )
                 self._json(201, run)
                 return
             tick_match = re.fullmatch(r"/api/runs/([A-Za-z0-9_-]+)/tick", path)

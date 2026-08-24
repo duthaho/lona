@@ -66,6 +66,9 @@ CREATE TABLE IF NOT EXISTS runs (
     workflow_fingerprint TEXT NOT NULL,
     status TEXT NOT NULL,
     input_json TEXT NOT NULL,
+    requested_provider TEXT,
+    requested_model TEXT,
+    usage_json TEXT NOT NULL DEFAULT '{}',
     step_count INTEGER NOT NULL DEFAULT 0,
     error TEXT,
     created_at TEXT NOT NULL,
@@ -111,6 +114,11 @@ CREATE TABLE IF NOT EXISTS external_executions (
     provider TEXT NOT NULL,
     external_run_id TEXT NOT NULL,
     status TEXT NOT NULL,
+    requested_provider TEXT,
+    requested_model TEXT,
+    reported_provider TEXT,
+    reported_model TEXT,
+    usage_json TEXT NOT NULL DEFAULT '{}',
     last_error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -166,6 +174,27 @@ class CohubStore:
     def initialize(self) -> None:
         with self.connection() as connection:
             connection.executescript(SCHEMA)
+            self._add_columns(connection, "runs", {
+                "requested_provider": "TEXT",
+                "requested_model": "TEXT",
+                "usage_json": "TEXT NOT NULL DEFAULT '{}'",
+            })
+            self._add_columns(connection, "external_executions", {
+                "requested_provider": "TEXT",
+                "requested_model": "TEXT",
+                "reported_provider": "TEXT",
+                "reported_model": "TEXT",
+                "usage_json": "TEXT NOT NULL DEFAULT '{}'",
+            })
+
+    @staticmethod
+    def _add_columns(connection: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+        """Apply additive migrations while preserving existing SQLite data."""
+
+        existing = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        for name, declaration in columns.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
 
     @staticmethod
     def _next_seq(connection: sqlite3.Connection, run_id: str) -> int:
@@ -241,20 +270,36 @@ class CohubStore:
         with self.connection() as connection:
             return _decode(connection.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone(), ("input_json",))
 
-    def create_run(self, task_id: str, workflow: dict[str, Any], input_data: dict[str, Any]) -> dict[str, Any]:
+    def create_run(
+        self,
+        task_id: str,
+        workflow: dict[str, Any],
+        input_data: dict[str, Any],
+        *,
+        requested_provider: str | None = None,
+        requested_model: str | None = None,
+    ) -> dict[str, Any]:
         run_id, now = _id("run"), utc_now()
         with self.connection() as connection:
             connection.execute(
-                """INSERT INTO runs(id,task_id,workflow_id,workflow_name,workflow_version,workflow_fingerprint,status,input_json,created_at,updated_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                (run_id, task_id, workflow["id"], workflow["name"], workflow["version"], workflow["fingerprint"], "queued", canonical_json(input_data), now, now),
+                """INSERT INTO runs(
+                       id,task_id,workflow_id,workflow_name,workflow_version,
+                       workflow_fingerprint,status,input_json,requested_provider,
+                       requested_model,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_id, task_id, workflow["id"], workflow["name"],
+                    workflow["version"], workflow["fingerprint"], "queued",
+                    canonical_json(input_data), requested_provider,
+                    requested_model, now, now,
+                ),
             )
             self._event(connection, run_id, "run.created", {"workflow": workflow["name"], "version": workflow["version"]})
             row = connection.execute(
                 "SELECT r.*, t.title AS title FROM runs r JOIN tasks t ON t.id=r.task_id WHERE r.id=?",
                 (run_id,),
             ).fetchone()
-            return _decode(row, ("input_json",))  # type: ignore[return-value]
+            return _decode(row, ("input_json", "usage_json"))  # type: ignore[return-value]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -262,7 +307,7 @@ class CohubStore:
                 "SELECT r.*, t.title AS title FROM runs r JOIN tasks t ON t.id=r.task_id WHERE r.id=?",
                 (run_id,),
             ).fetchone()
-            return _decode(row, ("input_json",))
+            return _decode(row, ("input_json", "usage_json"))
 
     def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connection() as connection:
@@ -272,7 +317,7 @@ class CohubStore:
                    ORDER BY r.updated_at DESC LIMIT ?""",
                 (limit,),
             ).fetchall()
-            return [_decode(row, ("input_json",)) for row in rows]  # type: ignore[misc]
+            return [_decode(row, ("input_json", "usage_json")) for row in rows]  # type: ignore[misc]
 
     def get_run_workflow(self, run_id: str) -> dict[str, Any]:
         with self.connection() as connection:
@@ -540,6 +585,9 @@ class CohubStore:
         attempt: int,
         provider: str,
         external_run_id: str,
+        *,
+        requested_provider: str | None = None,
+        requested_model: str | None = None,
     ) -> dict[str, Any]:
         """Persist an external run once so restart cannot submit a duplicate."""
 
@@ -550,12 +598,16 @@ class CohubStore:
                 (run_id, step_id, int(attempt)),
             ).fetchone()
             if existing:
-                return dict(existing)
+                return _decode(existing, ("usage_json",))  # type: ignore[return-value]
             connection.execute(
                 """INSERT INTO external_executions(
-                       run_id,step_id,attempt,provider,external_run_id,status,created_at,updated_at
-                   ) VALUES(?,?,?,?,?,'running',?,?)""",
-                (run_id, step_id, int(attempt), provider, external_run_id, now, now),
+                       run_id,step_id,attempt,provider,external_run_id,status,
+                       requested_provider,requested_model,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,'running',?,?,?,?)""",
+                (
+                    run_id, step_id, int(attempt), provider, external_run_id,
+                    requested_provider, requested_model, now, now,
+                ),
             )
             self._event(
                 connection,
@@ -568,7 +620,7 @@ class CohubStore:
                 "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
                 (run_id, step_id, int(attempt)),
             ).fetchone()
-            return dict(row)
+            return _decode(row, ("usage_json",))  # type: ignore[return-value]
 
     def get_external_execution(self, run_id: str, step_id: str, attempt: int) -> dict[str, Any] | None:
         with self.connection() as connection:
@@ -576,7 +628,7 @@ class CohubStore:
                 "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
                 (run_id, step_id, int(attempt)),
             ).fetchone()
-            return dict(row) if row else None
+            return _decode(row, ("usage_json",))
 
     def update_external_execution(
         self,
@@ -606,7 +658,54 @@ class CohubStore:
                 "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
                 (run_id, step_id, int(attempt)),
             ).fetchone()
-            return dict(row)
+            return _decode(row, ("usage_json",))  # type: ignore[return-value]
+
+    def record_external_result(
+        self,
+        run_id: str,
+        step_id: str,
+        attempt: int,
+        *,
+        reported_provider: str | None,
+        reported_model: str | None,
+        usage: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Persist reported model and aggregate usage exactly once per attempt."""
+
+        clean_usage = {
+            key: value
+            for key, value in (usage or {}).items()
+            if isinstance(key, str)
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        }
+        now = utc_now()
+        with self.connection() as connection:
+            external = connection.execute(
+                "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            if not external:
+                raise KeyError(f"external execution not found: {run_id}/{step_id}/{attempt}")
+            previous = json.loads(external["usage_json"] or "{}")
+            run = connection.execute("SELECT usage_json FROM runs WHERE id=?", (run_id,)).fetchone()
+            aggregate = json.loads(run["usage_json"] or "{}")
+            for key in set(previous) | set(clean_usage):
+                aggregate[key] = aggregate.get(key, 0) + clean_usage.get(key, 0) - previous.get(key, 0)
+            connection.execute(
+                """UPDATE external_executions SET reported_provider=?,reported_model=?,usage_json=?,updated_at=?
+                   WHERE run_id=? AND step_id=? AND attempt=?""",
+                (reported_provider, reported_model, canonical_json(clean_usage), now, run_id, step_id, int(attempt)),
+            )
+            connection.execute(
+                "UPDATE runs SET usage_json=?,updated_at=? WHERE id=?",
+                (canonical_json(aggregate), now, run_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM external_executions WHERE run_id=? AND step_id=? AND attempt=?",
+                (run_id, step_id, int(attempt)),
+            ).fetchone()
+            return _decode(row, ("usage_json",))  # type: ignore[return-value]
 
     def list_external_executions(self, run_id: str, *, active_only: bool = False) -> list[dict[str, Any]]:
         query = "SELECT * FROM external_executions WHERE run_id=?"
@@ -614,7 +713,10 @@ class CohubStore:
             query += " AND status NOT IN ('completed','failed','cancelled')"
         query += " ORDER BY created_at"
         with self.connection() as connection:
-            return [dict(row) for row in connection.execute(query, (run_id,)).fetchall()]
+            return [
+                _decode(row, ("usage_json",))
+                for row in connection.execute(query, (run_id,)).fetchall()
+            ]  # type: ignore[misc]
 
     def list_active_external_executions(self, run_id: str) -> list[dict[str, Any]]:
         return self.list_external_executions(run_id, active_only=True)

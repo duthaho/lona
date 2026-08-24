@@ -30,6 +30,34 @@ class FakeHermesHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
+        if self.path.startswith("/api/model/options"):
+            payload = json.dumps({
+                "provider": "openrouter",
+                "model": "free/default",
+                "providers": [
+                    {
+                        "slug": "openai-codex",
+                        "name": "OpenAI Codex",
+                        "authenticated": True,
+                        "models": ["gpt-5.6"],
+                        "featured_models": ["gpt-5.6"],
+                        "pricing": {"gpt-5.6": {"input": 1.0, "output": 5.0}},
+                    },
+                    {
+                        "slug": "openrouter",
+                        "name": "OpenRouter",
+                        "authenticated": False,
+                        "models": ["free/default"],
+                        "key_env": "OPENROUTER_API_KEY",
+                    },
+                ],
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         payload = json.dumps({
             "run_id": "hermes-1", "status": "completed",
             "output": json.dumps({"status": "completed", "output": {"report": "done"}, "route": "approved", "reason": "verified"}),
@@ -113,7 +141,13 @@ class DurableHermesStub(DurableStepExecutor):
 
     def get_status(self, external_run_id):
         if self.state == "completed":
-            return {"status": "completed", "output": '{"output":{"deployed":true}}'}
+            return {
+                "status": "completed",
+                "output": '{"output":{"deployed":true}}',
+                "provider": "openai-codex",
+                "model": "gpt-5.6",
+                "usage": {"input_tokens": 80, "output_tokens": 20, "total_tokens": 100},
+            }
         return {"status": self.state, "last_event": "approval.request"}
 
     def get_approval_event(self, external_run_id):
@@ -181,14 +215,32 @@ class ExecutorTests(unittest.TestCase):
             "run_id": "run-1", "step_id": "review", "attempt": 1,
             "node": {"prompt": "Review the report", "routes": {"approved": "done"}},
             "task_input": {"topic": "weekly"}, "dependency_outputs": {"draft": {"report": "text"}},
+            "execution_selection": {"provider": "openai-codex", "model": "gpt-5.6"},
         })()
         result = executor.execute(claimed)
         self.assertEqual(result.output, {"report": "done"})
         self.assertEqual(result.route, "approved")
         self.assertEqual(FakeHermesHandler.calls[0][0], "/v1/runs")
         self.assertEqual(FakeHermesHandler.calls[0][1]["session_id"], "run-1:review:1")
+        self.assertEqual(FakeHermesHandler.calls[0][1]["provider"], "openai-codex")
+        self.assertEqual(FakeHermesHandler.calls[0][1]["model"], "gpt-5.6")
         self.assertIsNone(FakeHermesHandler.calls[0][2])
         self.assertIn("Return exactly one JSON object", FakeHermesHandler.calls[0][1]["instructions"])
+
+    def test_hermes_model_catalog_exposes_only_authenticated_providers(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), FakeHermesHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        executor = HermesRunsExecutor(f"http://127.0.0.1:{server.server_port}", "secret")
+
+        catalog = executor.get_model_catalog()
+
+        self.assertEqual(catalog["current"], {"provider": "openrouter", "model": "free/default"})
+        self.assertEqual([item["provider"] for item in catalog["providers"]], ["openai-codex"])
+        self.assertEqual(catalog["providers"][0]["models"][0]["id"], "gpt-5.6")
+        self.assertNotIn("key_env", json.dumps(catalog))
 
     def test_hermes_executor_accepts_bare_output_object(self):
         result = HermesRunsExecutor._parse_result('{"answer": 5}')
@@ -250,7 +302,9 @@ class ExecutorTests(unittest.TestCase):
             },
         }
         store.publish_workflow(workflow)
-        run = engine.start_run("durable", {})
+        run = engine.start_run(
+            "durable", {}, requested_provider="openai-codex", requested_model="gpt-5.6"
+        )
         executor = DurableHermesStub()
         worker = WorkerService(engine, executor, worker_id="worker-one")
 
@@ -273,6 +327,12 @@ class ExecutorTests(unittest.TestCase):
         self.assertTrue(restarted_worker.tick(run["id"]))
         self.assertEqual(restarted_engine.status(run["id"])["status"], "completed")
         self.assertEqual(executor.submit_count, 1)
+        external = restarted_engine.status(run["id"])["external_executions"][0]
+        self.assertEqual(external["requested_provider"], "openai-codex")
+        self.assertEqual(external["requested_model"], "gpt-5.6")
+        self.assertEqual(external["reported_provider"], "openai-codex")
+        self.assertEqual(external["reported_model"], "gpt-5.6")
+        self.assertEqual(external["usage"]["total_tokens"], 100)
         duplicate = restarted_engine.resolve_approval(
             approval["id"], "approved", expected_payload_hash=approval["payload_hash"]
         )
