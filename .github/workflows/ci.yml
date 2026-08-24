@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lona:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Lona shell tests
+        run: bash tests/run.sh
+      - name: Validate shell syntax
+        run: bash -n deploy.sh scripts/*.sh tests/*.sh
+      - name: Validate Compose model
+        env:
+          HERMES_DASHBOARD_PASSWORD: ci-dashboard
+          HERMES_API_SERVER_KEY: ci-hermes-api
+          COHUB_API_TOKEN: ci-cohub-token
+        run: docker compose --profile hermes config --quiet
+
+  cohub:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    defaults:
+      run:
+        working-directory: apps/cohub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run Cohub tests
+        run: python -W error::ResourceWarning -m unittest discover -s tests -v
+      - name: Validate sources
+        run: |
+          python -m py_compile cohub/*.py
+          node --check cohub/static/app.js
+      - name: Exercise restart-safe demo
+        run: python -m cohub --data-dir /tmp/cohub-ci demo --approve

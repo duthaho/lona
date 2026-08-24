@@ -2,7 +2,7 @@
 
 **Your personal AI assistant, self-hosted with one command.**
 
-Lona is a batteries-included deployment kit for [OpenClaw](https://openclaw.ai) and [Hermes Agent](https://github.com/NousResearch/hermes-agent) — two of the leading open-source personal AI assistant platforms. Pick one, run one command on any Linux server, and talk to your assistant on Telegram minutes later.
+Lona is a batteries-included deployment kit for [OpenClaw](https://openclaw.ai) and [Hermes Agent](https://github.com/NousResearch/hermes-agent) — two of the leading open-source personal AI assistant platforms. Hermes deployments also include **Cohub**, Lona's deterministic personal-coworker dashboard and workflow control plane. Pick a platform, run one command on any Linux server, and talk to your assistant on Telegram minutes later.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![OpenClaw](https://img.shields.io/badge/platform-OpenClaw-orange)](https://openclaw.ai)
@@ -16,6 +16,7 @@ Lona is a batteries-included deployment kit for [OpenClaw](https://openclaw.ai) 
 - **Telegram-native** — DMs, groups, and forum topics (each topic is an isolated session); long-polling means no inbound ports and works behind NAT
 - **Secure defaults** — deny-by-default access control, loopback-only dashboards, auto-generated secrets, secrets never committed
 - **Portable state** — everything lives in `./data/`; back up, migrate, or wipe with a single directory
+- **Deterministic coworker workflows** — Hermes deployments include Cohub for versioned graphs, retries, approvals, artifacts, and restart-safe execution
 
 ## Architecture
 
@@ -26,8 +27,11 @@ flowchart LR
 
     subgraph VPS [Your server · Docker]
         GW["Gateway container<br/>(OpenClaw or Hermes)"]
+        CH["Cohub<br/>Hermes workflow control plane"]
         DATA[("./data/<br/>config · sessions · memory")]
         GW --- DATA
+        GW <--> CH
+        CH --- DATA
     end
 
     GW --> OR["OpenRouter<br/>(free models)"]
@@ -62,7 +66,7 @@ git clone https://github.com/duthaho/lona.git && cd lona
 ./deploy.sh openclaw          # or: ./deploy.sh hermes
 ```
 
-First run prompts for your OpenRouter key and Telegram token, generates auth secrets, seeds the config, pulls the image, and starts the gateway. Then just DM your bot.
+First run prompts for your OpenRouter key and Telegram token, generates auth secrets, seeds the config, pulls the image, and starts the gateway. The Hermes profile also builds and starts Cohub. Then just DM your bot.
 
 ## Commands
 
@@ -79,9 +83,22 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 | `config` | Edit the **live** config (`data/<platform>/…`) in `$EDITOR`, apply on save |
 | `sync` | Push the repo **template** (`config/<platform>/…`) into the live config without hand-editing: deep-merges over live runtime keys (Hermes) or regenerates from template + `.env` allowlists (OpenClaw), backs up, then applies (Hermes restart · OpenClaw hot-reload) |
 | `update` | Transactional update: back up, pull, recreate, canary, auto-rollback on failure (see [Safe updates](#safe-updates)) |
-| `backup` | Archive `./data/<platform>` into `./backups/` |
+| `backup` | Archive runtime state into `./backups/`; Hermes backups also include Cohub |
 | `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |
 | `cli …` | Run the platform's own CLI inside the container |
+
+## Cohub personal coworker
+
+`./deploy.sh hermes` starts Cohub alongside Hermes. Cohub owns deterministic workflow routing, retries, leases, payload-bound human approvals, artifacts, and append-only run traces; Hermes continues to own reasoning, tools, skills, memory, browser automation, models, and messaging.
+
+The services communicate only on the private Compose network. Hermes' Runs API port `8642` is **not** published to the host. Cohub itself stays on loopback by default:
+
+```bash
+ssh -L 8765:127.0.0.1:8765 user@your-vps
+# Open http://127.0.0.1:8765 and enter COHUB_API_TOKEN from .env.
+```
+
+Runtime state is stored in `data/cohub/`. `./deploy.sh hermes backup` includes both `data/hermes/` and `data/cohub/` in one archive. The workflow engine and developer documentation live under [`apps/cohub/`](apps/cohub/README.md).
 
 ## Models
 
@@ -174,11 +191,11 @@ in `.env`.
 | Back up all state | `./deploy.sh <platform> backup` |
 | Check model-chain health | `./deploy.sh <platform> doctor` — or `doctor install` for scheduled checks with Telegram alerts |
 | Switch platforms | `./deploy.sh openclaw down && ./deploy.sh hermes` — shared `.env`. Hermes can import OpenClaw state: `./deploy.sh hermes cli claw migrate` |
-| Open the dashboard | `ssh -L 18789:127.0.0.1:18789 user@vps` (OpenClaw) / `ssh -L 9119:127.0.0.1:9119 user@vps` (Hermes) |
+| Open the dashboard | `ssh -L 18789:127.0.0.1:18789 user@vps` (OpenClaw) / `ssh -L 9119:127.0.0.1:9119 -L 8765:127.0.0.1:8765 user@vps` (Hermes + Cohub) |
 
 ## Security model
 
-- **Network:** only Telegram long-polling leaves the box; dashboards bind to loopback and are reached via SSH tunnel. Expose them only behind a TLS reverse proxy (change `OPENCLAW_BIND` / `HERMES_DASHBOARD_BIND`).
+- **Network:** only Telegram long-polling leaves the box; dashboards bind to loopback and are reached via SSH tunnel. Hermes' Cohub API is protected by a generated bearer token, and the underlying Hermes Runs API stays private to the Compose network. Expose dashboards only behind a TLS reverse proxy (change `OPENCLAW_BIND`, `HERMES_DASHBOARD_BIND`, or `COHUB_BIND`).
 - **Access:** deny-by-default on both platforms — unknown Telegram users are blocked, groups must be allowlisted. OpenClaw DMs prefer an explicit numeric allowlist over pairing (the upstream-recommended one-owner setup), and each DM sender gets an isolated session.
 - **Blast radius:** free models are markedly easier to prompt-inject than frontier ones, so the OpenClaw template ships with workspace-only filesystem access and elevated tools disabled, and the Hermes template caps tool-loop iterations and hard-stops runaway loops. All of it is plain config — relax per agent once you move to a stronger model.
 - **Audit:** `deploy.sh` runs OpenClaw's built-in `security audit --fix` after every `up`/`update` (tightens file permissions, flips risky open policies to allowlists).
@@ -194,6 +211,7 @@ docker-compose.yml             Both platforms as Compose profiles
 config/
   openclaw/openclaw.json       OpenClaw template (seeded to data/ on first run)
   hermes/config.yaml           Hermes template (seeded to data/ on first run)
+apps/cohub/                    Deterministic workflow engine, dashboard, tests
 scripts/bootstrap.sh           curl-able installer for a fresh server
 scripts/doctor.sh              Model-chain health checks (./deploy.sh <p> doctor)
 scripts/selfupdate.sh          Transactional update + rollback (./deploy.sh <p> update)
