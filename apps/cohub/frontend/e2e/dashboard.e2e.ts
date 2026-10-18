@@ -55,21 +55,43 @@ test("operator can save, reopen, validate, and publish a form-based workflow dra
     await page.getByRole("button", { name: "Open navigation" }).click();
   }
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  const draftResponse = page.waitForResponse((response) => response.url().endsWith("/api/workflow-drafts") && response.request().method() === "POST");
   await page.getByRole("button", { name: "New draft" }).click();
+  const createdDraft = await (await draftResponse).json();
 
   await expect(page.getByRole("heading", { name: "untitled-workflow" })).toBeVisible();
   await page.getByLabel("Workflow name").fill(workflowName);
   await page.getByLabel("New node ID").fill("draft");
   await page.getByRole("button", { name: "Add node" }).click();
   await page.getByLabel("Prompt").fill("Create a concise verified report.");
-  await page.getByLabel("Next node").selectOption("done");
+  const draftNode = page.locator('.react-flow__node[data-id="draft"]');
+  await expect(draftNode).toBeVisible();
+  const before = await draftNode.boundingBox();
+  if (!before) throw new Error("Draft canvas node has no bounding box");
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 + 80, before.y + before.height / 2 + 48, { steps: 8 });
+  await page.mouse.up();
+  const source = draftNode.locator('.react-flow__handle[data-handleid="next"]');
+  const target = page.locator('.react-flow__node[data-id="done"] .react-flow__handle[data-handleid="target"]');
+  await source.click();
+  await target.click();
+  await page.getByLabel("Canvas node draft").click();
+  await expect(page.getByLabel("Next node")).toHaveValue("done");
+  await expect(page.locator(".react-flow__edge-text").filter({ hasText: "next" })).toBeVisible();
   await page.getByLabel("Start node").selectOption("draft");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByText("Saved revision 2")).toBeVisible();
+  const savedDraft = await (await page.request.get(`/api/workflow-drafts/${createdDraft.id}`)).json();
+  expect(savedDraft.definition.nodes.draft.next).toBe("done");
+  if (testInfo.project.name === "desktop") {
+    expect(savedDraft.layout.draft).toEqual(expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
+  }
   await page.getByRole("button", { name: "Close" }).click();
 
   await page.getByRole("button", { name: /Drafts/ }).click();
   await page.getByRole("button", { name: new RegExp(workflowName) }).click();
+  await expect(page.getByLabel("Canvas node draft")).toBeVisible();
   await page.getByRole("button", { name: "Advanced JSON" }).click();
   const download = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export JSON" }).click();

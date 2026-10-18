@@ -277,7 +277,7 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 .draft-list small { overflow: hidden; color: var(--faint); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .draft-symbol { color: #a6a9ff; background: rgba(94,106,210,.12); }
 
-.modal-editor { width: min(1180px, calc(100vw - 36px)); height: min(820px, calc(100vh - 36px)); max-height: none; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.modal-editor { width: min(1440px, calc(100vw - 28px)); height: min(880px, calc(100vh - 28px)); max-height: none; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .modal-editor > .modal-header { flex: none; margin: 0; padding: 19px 22px 16px; }
 .unsaved-dot { color: #f1c36b; font-size: 9px; }
 .draft-toolbar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 22px; border-bottom: 1px solid var(--line); }
@@ -289,7 +289,7 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 .diagnostic-list { flex: none; display: grid; gap: 5px; max-height: 120px; margin: 8px 22px 0; overflow: auto; }
 .diagnostic-list button { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; padding: 8px 10px; color: var(--muted); border: 1px solid rgba(218,165,62,.18); border-radius: 6px; background: rgba(218,165,62,.035); text-align: left; font-size: 9px; }
 .diagnostic-list code { color: #e4bd70; }
-.draft-editor-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 330px minmax(0,1fr); }
+.draft-editor-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 260px minmax(420px,1fr) 350px; }
 .draft-node-list { min-height: 0; padding: 18px; overflow: auto; border-right: 1px solid var(--line); background: rgba(0,0,0,.1); }
 .draft-basics, .node-inspector { display: grid; gap: 14px; }
 .draft-basics { padding-bottom: 18px; margin-bottom: 17px; border-bottom: 1px solid var(--line); }
@@ -304,6 +304,40 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 .add-node { display: grid; grid-template-columns: 1fr 110px; gap: 7px; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--line); }
 .add-node .button { grid-column: 1 / -1; }
 .draft-inspector-panel { min-width: 0; overflow: auto; padding: 25px 28px 50px; }
+.draft-canvas-panel { min-width: 0; min-height: 0; position: relative; overflow: hidden; border-right: 1px solid var(--line); background: radial-gradient(circle at 50% 42%, rgba(102,82,214,.08), transparent 52%), #0d0e11; }
+.workflow-flow { width: 100%; height: 100%; min-height: 420px; }
+.canvas-node { position: relative; width: 184px; min-height: 92px; padding: 13px 15px; color: var(--text); border: 1px solid rgba(126,111,255,.38); border-radius: 9px; background: linear-gradient(145deg, rgba(29,29,39,.98), rgba(19,20,25,.98)); box-shadow: 0 8px 24px rgba(0,0,0,.3); transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease; }
+.canvas-node.selected { border-color: #8d80ff; box-shadow: 0 0 0 2px rgba(117,103,255,.18), 0 12px 32px rgba(0,0,0,.4); }
+.canvas-node:hover { transform: translateY(-1px); }
+.canvas-node header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.canvas-node header span { color: #a9a0ff; font: 8px "JetBrains Mono", monospace; letter-spacing: .09em; text-transform: uppercase; }
+.canvas-node header b { padding: 2px 5px; color: #9ce6bd; border-radius: 3px; background: rgba(51,174,110,.12); font-size: 7px; text-transform: uppercase; }
+.canvas-node > strong { display: block; overflow: hidden; padding-right: 38px; font: 11px "JetBrains Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-node > small { display: block; margin-top: 5px; color: var(--faint); font-size: 8px; }
+.canvas-node-human { border-color: rgba(226,173,75,.42); }
+.canvas-node-human header span { color: #e7bd6d; }
+.canvas-node-end { border-color: rgba(93,211,158,.4); }
+.canvas-node-end header span { color: #78dcae; }
+.canvas-node-decision { border-color: rgba(91,174,225,.42); }
+.canvas-node-decision header span { color: #81c8f0; }
+.source-handle-row { position: absolute; right: -1px; display: flex; align-items: center; gap: 5px; transform: translateY(-50%); }
+.source-handle-row span { position: absolute; right: 13px; width: max-content; max-width: 68px; overflow: hidden; color: var(--faint); font: 7px "JetBrains Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-handle { width: 9px !important; height: 9px !important; border: 2px solid #17181d !important; background: #887aff !important; }
+.target-handle { background: #555963 !important; }
+.workflow-flow .react-flow__node { border: 0; background: transparent; }
+.workflow-flow .react-flow__edge-path { stroke: #696373; stroke-width: 1.6; }
+.workflow-flow .edge-route .react-flow__edge-path { stroke: #558fb4; }
+.workflow-flow .edge-branch .react-flow__edge-path { stroke: #8b70bf; stroke-dasharray: 5 4; }
+.workflow-flow .react-flow__edge.selected .react-flow__edge-path { stroke: #9b8fff; stroke-width: 2.3; }
+.workflow-flow .react-flow__edge-text { fill: #b9b7c1; font: 8px "JetBrains Mono", monospace; }
+.workflow-flow .react-flow__edge-textbg { fill: #121318; fill-opacity: .94; }
+.workflow-flow .react-flow__controls { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; box-shadow: none; }
+.workflow-flow .react-flow__controls-button { color: var(--muted); border-bottom-color: var(--line); background: #17181d; }
+.workflow-flow .react-flow__controls-button:hover { color: var(--text); background: #202127; }
+.workflow-flow .react-flow__controls-button svg { fill: currentColor; }
+.workflow-flow .react-flow__minimap { border: 1px solid var(--line); border-radius: 7px; background: rgba(15,16,20,.9); }
+.workflow-flow .canvas-help { margin: 12px; padding: 6px 9px; color: var(--faint); border: 1px solid var(--line); border-radius: 5px; background: rgba(17,18,23,.84); font: 8px "JetBrains Mono", monospace; pointer-events: none; }
+.workflow-flow .react-flow__attribution { display: none; }
 .node-inspector { max-width: 720px; }
 .inspector-heading { display: flex; align-items: center; justify-content: space-between; padding-bottom: 15px; border-bottom: 1px solid var(--line); }
 .inspector-heading h3 { margin: 4px 0 0; font-size: 18px; font-weight: 550; }
@@ -362,6 +396,11 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.99); } }
 @keyframes drawer-in { from { transform: translateX(20px); opacity: 0; } }
 
+@media (max-width: 1180px) {
+  .draft-editor-layout { grid-template-columns: 230px minmax(360px,1fr) 310px; }
+  .draft-inspector-panel { padding-inline: 20px; }
+}
+
 @media (max-width: 980px) {
   .main-content { padding-inline: 24px; }
   .dashboard-grid { grid-template-columns: 1fr; }
@@ -404,9 +443,10 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
   .toolbar-actions .button { padding-inline: 8px; }
   .modal-editor { width: 100vw; height: 100vh; margin: 0; border: 0; border-radius: 0; }
   .modal-editor > .modal-header { padding-inline: 15px; }
-  .draft-editor-layout { display: block; overflow: auto; }
-  .draft-node-list { overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
-  .draft-inspector-panel { overflow: visible; padding: 20px 18px 45px; }
+  .draft-editor-layout { display: flex; flex-direction: column; overflow: auto; }
+  .draft-node-list { flex: none; min-height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+  .draft-canvas-panel { flex: none; width: 100%; height: 480px; min-height: 480px; border-right: 0; border-bottom: 1px solid var(--line); isolation: isolate; }
+  .draft-inspector-panel { flex: none; overflow: visible; padding: 20px 18px 45px; }
   .editor-grid.two, .branch-grid { grid-template-columns: 1fr; }
   .draft-list > button { grid-template-columns: auto minmax(0,1fr) auto; }
   .draft-list > button .status { display: none; }

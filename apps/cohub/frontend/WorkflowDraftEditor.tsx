@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Check, ChevronRight, Code2, FileDown, Plus, Save, Send, Trash2, X } from "lucide-react";
 import { request } from "./api";
+import { WorkflowCanvas } from "./WorkflowCanvas";
 import type {
   DraftDiagnostic,
   Workflow,
@@ -10,6 +11,7 @@ import type {
   WorkflowNodeType,
 } from "./types";
 import { addNode, removeNode, renameNode, setNodeType } from "./workflowDraft";
+import { applyConnection, disconnectEdge, type WorkflowLayout } from "./workflowGraph";
 
 
 type ValidationResult = { valid: boolean; revision: number; diagnostics: DraftDiagnostic[] };
@@ -63,11 +65,13 @@ function TargetSelect({ value = "", nodeIds, currentId, onChange, label = "Next 
   return <label>{label}<select value={value} onChange={(event) => onChange(event.target.value || undefined)}><option value="">None</option>{nodeIds.filter((id) => id !== currentId).map((id) => <option key={id} value={id}>{id}</option>)}</select></label>;
 }
 
-function NodeInspector({ definition, selectedId, onDefinition, onSelect }: {
+function NodeInspector({ definition, selectedId, onDefinition, onSelect, onDelete, onRename }: {
   definition: WorkflowDefinition;
   selectedId: string;
   onDefinition: (definition: WorkflowDefinition) => void;
   onSelect: (nodeId: string) => void;
+  onDelete: (nodeId: string) => void;
+  onRename: (oldId: string, newId: string) => void;
 }) {
   const node = definition.nodes[selectedId];
   const nodeIds = Object.keys(definition.nodes);
@@ -85,17 +89,15 @@ function NodeInspector({ definition, selectedId, onDefinition, onSelect }: {
   const commitRename = () => {
     try {
       const renamed = renameNode(definition, selectedId, renameValue);
+      const nextId = renameValue.trim();
       onDefinition(renamed);
-      onSelect(renameValue.trim());
+      onRename(selectedId, nextId);
+      onSelect(nextId);
     } catch {
       setRenameValue(selectedId);
     }
   };
-  const remove = () => {
-    const remaining = nodeIds.filter((id) => id !== selectedId);
-    onDefinition(removeNode(definition, selectedId));
-    onSelect(remaining[0] || "");
-  };
+  const remove = () => onDelete(selectedId);
 
   return <div className="node-inspector">
     <div className="inspector-heading"><div><span className="overline">Node inspector</span><h3>{selectedId}</h3></div><button className="icon-button danger-icon" onClick={remove} disabled={nodeIds.length === 1} title="Remove node"><Trash2 size={15} /></button></div>
@@ -126,6 +128,7 @@ export function WorkflowDraftEditor({ draft, token, onClose, onSaved, onPublishe
   onPublished: (workflow: Workflow) => void;
 }) {
   const [definition, setDefinition] = useState(() => editableDefinition(draft.definition));
+  const [layout, setLayout] = useState<WorkflowLayout>(() => draft.layout || {});
   const [revision, setRevision] = useState(draft.revision);
   const [selectedId, setSelectedId] = useState(() => {
     const initial = editableDefinition(draft.definition);
@@ -146,11 +149,33 @@ export function WorkflowDraftEditor({ draft, token, onClose, onSaved, onPublishe
     setDirty(true);
     setDiagnostics([]);
   };
+  const changeLayout = (next: WorkflowLayout) => {
+    setLayout(next);
+    setDirty(true);
+  };
+  const renameLayoutNode = (oldId: string, newId: string) => {
+    if (!layout[oldId] || oldId === newId) return;
+    const next = { ...layout, [newId]: layout[oldId] };
+    delete next[oldId];
+    changeLayout(next);
+  };
+  const deleteNode = (nodeId: string) => {
+    if (Object.keys(definition.nodes).length <= 1) {
+      setMessage("A workflow draft must keep at least one node.");
+      return;
+    }
+    const next = removeNode(definition, nodeId);
+    const nextLayout = { ...layout };
+    delete nextLayout[nodeId];
+    changeDefinition(next);
+    setLayout(nextLayout);
+    setSelectedId(next.start || Object.keys(next.nodes)[0] || "");
+  };
   const save = async () => {
-    if (!dirty) return { ...draft, revision, definition } as WorkflowDraft;
+    if (!dirty) return { ...draft, revision, definition, layout } as WorkflowDraft;
     const saved = await request<WorkflowDraft>(`/api/workflow-drafts/${draft.id}`, token, {
       method: "PUT",
-      body: JSON.stringify({ revision, definition }),
+      body: JSON.stringify({ revision, definition, layout }),
     });
     setRevision(saved.revision);
     setDirty(false);
@@ -194,6 +219,6 @@ export function WorkflowDraftEditor({ draft, token, onClose, onSaved, onPublishe
     <div className="draft-toolbar"><div className="segmented"><button className={!advanced ? "active" : ""} onClick={() => setAdvanced(false)}>Form editor</button><button className={advanced ? "active" : ""} onClick={() => { setJsonText(JSON.stringify(definition, null, 2)); setAdvanced(true); }}><Code2 size={14} /> Advanced JSON</button></div><div className="toolbar-actions"><button className="button secondary" onClick={() => runAction("validate")} disabled={busy}><Check size={15} /> Validate</button><button className="button secondary" onClick={() => runAction("save")} disabled={busy || !dirty}><Save size={15} /> Save draft</button><button className="button primary" onClick={() => runAction("publish")} disabled={busy}><Send size={15} /> Publish</button></div></div>
     {message && <div className={`editor-message ${diagnostics.length ? "warning" : ""}`}>{diagnostics.length ? <AlertTriangle size={15} /> : <Check size={15} />}<span>{message}</span></div>}
     {diagnostics.length > 0 && <div className="diagnostic-list">{diagnostics.map((item) => <button key={`${item.path}-${item.message}`} onClick={() => { const nodeId = item.path.startsWith("nodes.") ? item.path.slice(6) : ""; if (nodeId && definition.nodes[nodeId]) { setSelectedId(nodeId); setAdvanced(false); } }}><code>{item.path}</code><span>{item.message}</span><ChevronRight size={14} /></button>)}</div>}
-    {advanced ? <div className="advanced-editor"><div className="advanced-heading"><p>Import or edit the canonical executable definition. Canvas layout is stored separately.</p><button className="button secondary" onClick={exportJson}><FileDown size={14} /> Export JSON</button></div><textarea aria-label="Workflow JSON" value={jsonText} onChange={(event) => setJsonText(event.target.value)} rows={24} spellCheck={false} /><button className="button primary" onClick={applyJson}>Apply JSON</button></div> : <div className="draft-editor-layout"><aside className="draft-node-list"><div className="draft-basics"><label>Workflow name<input value={definition.name} onChange={(event) => changeDefinition({ ...definition, name: event.target.value })} /></label><label>Description<textarea value={definition.description || ""} onChange={(event) => changeDefinition({ ...definition, description: event.target.value })} rows={3} /></label><label>Start node<select value={definition.start} onChange={(event) => changeDefinition({ ...definition, start: event.target.value })}>{nodeIds.map((id) => <option key={id}>{id}</option>)}</select></label></div><div className="section-heading"><h3>Nodes</h3><span>{nodeIds.length}</span></div><div className="draft-node-buttons">{nodeIds.map((id) => <button className={selectedId === id ? "active" : ""} key={id} onClick={() => setSelectedId(id)}><span className={`node-badge node-${definition.nodes[id].type}`}>{definition.nodes[id].type}</span><strong>{id}</strong><ChevronRight size={14} /></button>)}</div><div className="add-node"><input aria-label="New node ID" placeholder="new-node" value={newNodeId} onChange={(event) => setNewNodeId(event.target.value)} /><select aria-label="New node type" value={newNodeType} onChange={(event) => setNewNodeType(event.target.value as WorkflowNodeType)}><option value="task">AI task</option><option value="decision">Decision</option><option value="parallel">Parallel</option><option value="human">Human approval</option><option value="end">End</option></select><button className="button secondary" onClick={() => { try { const next = addNode(definition, newNodeId, newNodeType); changeDefinition(next); setSelectedId(newNodeId.trim()); setNewNodeId(""); } catch (caught) { setMessage((caught as Error).message); } }} disabled={!newNodeId.trim()}><Plus size={14} /> Add node</button></div></aside><main className="draft-inspector-panel"><NodeInspector definition={definition} selectedId={selectedId} onDefinition={changeDefinition} onSelect={setSelectedId} /></main></div>}
+    {advanced ? <div className="advanced-editor"><div className="advanced-heading"><p>Import or edit the canonical executable definition. Canvas layout is stored separately.</p><button className="button secondary" onClick={exportJson}><FileDown size={14} /> Export JSON</button></div><textarea aria-label="Workflow JSON" value={jsonText} onChange={(event) => setJsonText(event.target.value)} rows={24} spellCheck={false} /><button className="button primary" onClick={applyJson}>Apply JSON</button></div> : <div className="draft-editor-layout"><aside className="draft-node-list"><div className="draft-basics"><label>Workflow name<input value={definition.name} onChange={(event) => changeDefinition({ ...definition, name: event.target.value })} /></label><label>Description<textarea value={definition.description || ""} onChange={(event) => changeDefinition({ ...definition, description: event.target.value })} rows={3} /></label><label>Start node<select value={definition.start} onChange={(event) => changeDefinition({ ...definition, start: event.target.value })}>{nodeIds.map((id) => <option key={id}>{id}</option>)}</select></label></div><div className="section-heading"><h3>Nodes</h3><span>{nodeIds.length}</span></div><div className="draft-node-buttons">{nodeIds.map((id) => <button className={selectedId === id ? "active" : ""} key={id} onClick={() => setSelectedId(id)}><span className={`node-badge node-${definition.nodes[id].type}`}>{definition.nodes[id].type}</span><strong>{id}</strong><ChevronRight size={14} /></button>)}</div><div className="add-node"><input aria-label="New node ID" placeholder="new-node" value={newNodeId} onChange={(event) => setNewNodeId(event.target.value)} /><select aria-label="New node type" value={newNodeType} onChange={(event) => setNewNodeType(event.target.value as WorkflowNodeType)}><option value="task">AI task</option><option value="decision">Decision</option><option value="parallel">Parallel</option><option value="human">Human approval</option><option value="end">End</option></select><button className="button secondary" onClick={() => { try { const next = addNode(definition, newNodeId, newNodeType); changeDefinition(next); setSelectedId(newNodeId.trim()); setNewNodeId(""); } catch (caught) { setMessage((caught as Error).message); } }} disabled={!newNodeId.trim()}><Plus size={14} /> Add node</button></div></aside><section className="draft-canvas-panel"><WorkflowCanvas definition={definition} layout={layout} selectedId={selectedId} onSelect={setSelectedId} onDefinitionConnection={(connection) => changeDefinition(applyConnection(definition, connection))} onDeleteEdge={(edge) => changeDefinition(disconnectEdge(definition, edge))} onDeleteNode={deleteNode} onLayout={changeLayout} onMessage={setMessage} /></section><main className="draft-inspector-panel"><NodeInspector definition={definition} selectedId={selectedId} onDefinition={changeDefinition} onSelect={setSelectedId} onDelete={deleteNode} onRename={renameLayoutNode} /></main></div>}
   </section></div>;
 }
