@@ -120,6 +120,8 @@ def validate_workflow(workflow: Any) -> dict[str, Any]:
         queue.extend(_edges(nodes[node_id]))
     if not any(nodes[node_id]["type"] == "end" for node_id in reachable):
         raise WorkflowValidationError("workflow must contain a reachable end node")
+    if "input_schema" in normalized:
+        _validate_input_schema(normalized["input_schema"])
     normalized.setdefault("defaults", {})
     normalized.setdefault("budget", {})
     return normalized
@@ -151,3 +153,68 @@ def validate_output(output: Any, schema: dict[str, Any] | None) -> None:
         for key, child in schema.get("properties", {}).items():
             if key in output:
                 validate_output(output[key], child)
+
+
+def _validate_input_schema(schema: Any) -> None:
+    if not isinstance(schema, dict):
+        raise WorkflowValidationError("input_schema must be an object")
+    unknown = set(schema) - {"type", "properties", "required"}
+    if unknown:
+        raise WorkflowValidationError(f"input_schema has unsupported key: {sorted(unknown)[0]}")
+    if schema.get("type") != "object":
+        raise WorkflowValidationError("input_schema.type must be object")
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        raise WorkflowValidationError("input_schema.properties must be an object")
+    required = schema.get("required", [])
+    if not isinstance(required, list) or any(not isinstance(item, str) or item not in properties for item in required):
+        raise WorkflowValidationError("input_schema.required must reference declared properties")
+    allowed_types = {"string", "number", "integer", "boolean"}
+    for name, field in properties.items():
+        if not isinstance(name, str) or not name or not isinstance(field, dict):
+            raise WorkflowValidationError("input_schema properties must be named field objects")
+        unknown_field = set(field) - {"type", "title", "description", "default", "enum"}
+        if unknown_field:
+            raise WorkflowValidationError(f"input_schema.{name} has unsupported key: {sorted(unknown_field)[0]}")
+        if field.get("type") not in allowed_types:
+            raise WorkflowValidationError(f"input_schema.{name}.type is unsupported")
+        if "enum" in field and (not isinstance(field["enum"], list) or not field["enum"]):
+            raise WorkflowValidationError(f"input_schema.{name}.enum must be a non-empty array")
+        if "default" in field:
+            _validate_input_value(name, field["default"], field)
+
+
+def _validate_input_value(name: str, value: Any, field: dict[str, Any]) -> None:
+    expected = field["type"]
+    valid = {
+        "string": isinstance(value, str),
+        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
+        "integer": isinstance(value, int) and not isinstance(value, bool),
+        "boolean": isinstance(value, bool),
+    }[expected]
+    if not valid:
+        raise WorkflowValidationError(f"input {name} must be an {expected}" if expected == "integer" else f"input {name} must be a {expected}")
+    if "enum" in field and value not in field["enum"]:
+        raise WorkflowValidationError(f"input {name} must be one of the declared options")
+
+
+def validate_run_input(workflow: dict[str, Any], input_data: dict[str, Any]) -> dict[str, Any]:
+    """Validate and default run input using a workflow's optional form schema."""
+
+    schema = workflow.get("input_schema")
+    if schema is None:
+        return copy.deepcopy(input_data)
+    _validate_input_schema(schema)
+    unknown = set(input_data) - set(schema["properties"])
+    if unknown:
+        raise WorkflowValidationError(f"input contains undeclared property: {sorted(unknown)[0]}")
+    result = copy.deepcopy(input_data)
+    for name, field in schema["properties"].items():
+        if name not in result and "default" in field:
+            result[name] = copy.deepcopy(field["default"])
+        if name in result:
+            _validate_input_value(name, result[name], field)
+    for name in schema.get("required", []):
+        if name not in result:
+            raise WorkflowValidationError(f"input {name} is required")
+    return result

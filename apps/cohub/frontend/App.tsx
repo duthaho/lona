@@ -81,6 +81,7 @@ function App() {
   const [drafts, setDrafts] = useState<WorkflowDraft[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog | null>(null);
+  const [analytics, setAnalytics] = useState<Array<{ workflow: string; provider: string; model: string; runs: number; completed: number; failed: number; tokens: number; cost: number; avg_latency_seconds: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
   const [error, setError] = useState("");
@@ -103,17 +104,18 @@ function App() {
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
-      const [overviewData, allRuns, allTasks, allWorkflows, pending, allDrafts] = await Promise.all([
+      const [overviewData, allRuns, allTasks, allWorkflows, pending, allDrafts, analyticsData] = await Promise.all([
         request<Overview>("/api/overview", token),
         request<{ runs: Run[] }>("/api/runs", token),
         request<{ tasks: Task[] }>("/api/tasks", token),
         request<{ workflows: Workflow[] }>("/api/workflows", token),
         request<{ approvals: Approval[] }>("/api/approvals", token),
         request<{ drafts: WorkflowDraft[] }>("/api/workflow-drafts", token),
+        request<{ models: Array<{ workflow: string; provider: string; model: string; runs: number; completed: number; failed: number; tokens: number; cost: number; avg_latency_seconds: number }> }>("/api/analytics", token),
       ]);
       setOverview(overviewData); setRuns(allRuns.runs); setTasks(allTasks.tasks);
       setWorkflows(allWorkflows.workflows); setApprovals(pending.approvals);
-      setDrafts(allDrafts.drafts);
+      setDrafts(allDrafts.drafts); setAnalytics(analyticsData.models);
       setSelectedWorkflow((current) => current || allWorkflows.workflows[0] || null);
       try { setModelCatalog(await request<ModelCatalog>("/api/hermes/models", token)); }
       catch { setModelCatalog(null); }
@@ -160,6 +162,12 @@ function App() {
       setDrafts((current) => [draft, ...current]); setEditingDraft(draft);
     } catch (caught) { notify((caught as Error).message); }
   };
+  const createTemplateDraft = async (templateId: string) => {
+    try {
+      const draft = await request<WorkflowDraft>("/api/workflow-drafts", token, { method: "POST", body: JSON.stringify({ template_id: templateId }) });
+      setDrafts((current) => [draft, ...current]); setEditingDraft(draft);
+    } catch (caught) { notify((caught as Error).message); }
+  };
   const duplicateWorkflow = async (workflow: Workflow) => {
     try {
       const draft = await request<WorkflowDraft>("/api/workflow-drafts", token, { method: "POST", body: JSON.stringify({ workflow_name: workflow.name, version: workflow.version }) });
@@ -193,10 +201,10 @@ function App() {
 
       {error && <div className="error-banner"><AlertTriangle size={18} /><div><strong>Could not refresh Cohub</strong><span>{error}</span></div><button onClick={() => void loadData()}>Retry</button></div>}
       {loading && !overview ? <Skeleton rows={7} /> : <>
-        {view === "overview" && <OverviewView overview={overview} runs={runs} approvals={approvals} onRun={openRun} onApproval={reviewApproval} onNavigate={navigate} onNewRun={() => setModal("new-run")} />}
+        {view === "overview" && <OverviewView overview={overview} runs={runs} approvals={approvals} analytics={analytics} onRun={openRun} onApproval={reviewApproval} onNavigate={navigate} onNewRun={() => setModal("new-run")} />}
         {view === "runs" && <section><PageIntro eyebrow="Execution history" title="Runs" description="Track every workflow execution from queue to delivery." action={<button className="button primary" onClick={() => setModal("new-run")}><Plus size={16} /> New run</button>} /><FilterBar query={query} onQuery={setQuery} status={runFilter} onStatus={setRunFilter} />{filteredRuns.length ? <div className="panel table-panel"><RunTable runs={filteredRuns} onSelect={openRun} /></div> : <EmptyState icon={Search} title="No matching runs" description="Try a different search or status filter." />}</section>}
         {view === "tasks" && <section><PageIntro eyebrow="Delegated goals" title="Tasks" description="The user intent behind each workflow run." /><div className="filter-bar"><label className="search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search tasks" /></label></div><div className="panel list-panel">{filteredTasks.length ? filteredTasks.map((task) => <div className="task-row" key={task.id}><span className="task-check"><Check size={15} /></span><div><strong>{task.title}</strong><small>{task.id} · Updated {relativeTime(task.updated_at)}</small></div><Status value={task.status} /></div>) : <EmptyState title="No matching tasks" description="Tasks appear when you delegate a new run." />}</div></section>}
-        {view === "workflows" && <WorkflowsView workflows={workflows} drafts={drafts} selected={selectedWorkflow} onSelect={setSelectedWorkflow} onRun={(workflow) => { setSelectedWorkflow(workflow); setModal("new-run"); }} onNewDraft={() => void createDraft()} onEditDraft={(draft) => void openDraft(draft)} onDuplicate={(workflow) => void duplicateWorkflow(workflow)} onImport={() => setModal("publish")} />}
+        {view === "workflows" && <WorkflowsView workflows={workflows} drafts={drafts} selected={selectedWorkflow} onSelect={setSelectedWorkflow} onRun={(workflow) => { setSelectedWorkflow(workflow); setModal("new-run"); }} onNewDraft={() => void createDraft()} onTemplate={(templateId) => void createTemplateDraft(templateId)} onEditDraft={(draft) => void openDraft(draft)} onDuplicate={(workflow) => void duplicateWorkflow(workflow)} onImport={() => setModal("publish")} />}
         {view === "approvals" && <section><PageIntro eyebrow="Human in the loop" title="Approvals" description="Review protected workflow actions and Hermes tool requests before they continue." /><div className="attention-note"><ShieldCheck size={18} /><div><strong>Decisions are payload-bound</strong><span>Every decision is checked against the exact SHA-256 payload you reviewed. Hermes tool approvals are always one-shot.</span></div></div><div className="panel approval-list">{approvals.length ? approvals.map((approval) => <ApprovalItem key={approval.id} approval={approval} onReview={reviewApproval} />) : <EmptyState icon={ShieldCheck} title="You're all caught up" description="No protected actions are waiting for your decision." />}</div></section>}
       </>}
     </main>
@@ -219,7 +227,7 @@ function FilterBar({ query, onQuery, status, onStatus }: { query: string; onQuer
   return <div className="filter-bar"><label className="search"><Search size={16} /><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search by title, workflow, or run ID" /></label><div className="filter-pills">{statuses.map((item) => <button className={status === item ? "active" : ""} key={item} onClick={() => onStatus(item)}>{titleCase(item)}</button>)}</div></div>;
 }
 
-function OverviewView({ overview, runs, approvals, onRun, onApproval, onNavigate, onNewRun }: { overview: Overview | null; runs: Run[]; approvals: Approval[]; onRun: (run: Run) => void; onApproval: (approval: Approval) => void; onNavigate: (view: View) => void; onNewRun: () => void }) {
+function OverviewView({ overview, runs, approvals, analytics, onRun, onApproval, onNavigate, onNewRun }: { overview: Overview | null; runs: Run[]; approvals: Approval[]; analytics: Array<{ workflow: string; provider: string; model: string; runs: number; completed: number; failed: number; tokens: number; cost: number; avg_latency_seconds: number }>; onRun: (run: Run) => void; onApproval: (approval: Approval) => void; onNavigate: (view: View) => void; onNewRun: () => void }) {
   const counts = overview?.counts || {};
   const active = runs.filter((run) => !terminalStatuses.has(run.status)).slice(0, 5);
   const metrics = [
@@ -234,16 +242,18 @@ function OverviewView({ overview, runs, approvals, onRun, onApproval, onNavigate
     <div className="metric-grid">{metrics.map(([label, count, Icon, detail]) => <article className="metric-card" key={label}><div><span>{label}</span><Icon size={16} /></div><strong>{count}</strong><small>{detail}</small></article>)}</div>
     <div className="dashboard-grid"><article className="panel"><div className="panel-header"><div><span className="overline">Live queue</span><h3>Active runs</h3></div><button className="link-button" onClick={() => onNavigate("runs")}>View all <ArrowRight size={14} /></button></div>{active.length ? <div className="compact-list">{active.map((run) => <button key={run.id} onClick={() => onRun(run)}><span className="run-glyph"><Activity size={16} /></span><span><strong>{run.title || run.workflow_name}</strong><small>{run.workflow_name} · {relativeTime(run.updated_at)}</small></span><Status value={run.status} /></button>)}</div> : <EmptyState icon={CirclePause} title="Nothing is running" description="Delegate a workflow when you're ready." />}</article>
     <article className="panel"><div className="panel-header"><div><span className="overline">Review queue</span><h3>Needs attention</h3></div>{approvals.length > 0 && <button className="link-button" onClick={() => onNavigate("approvals")}>View all <ArrowRight size={14} /></button>}</div>{approvals.length ? <div className="compact-list approvals-compact">{approvals.slice(0, 4).map((approval) => <ApprovalItem key={approval.id} approval={approval} onReview={onApproval} />)}</div> : <EmptyState icon={ShieldCheck} title="No decisions pending" description="Protected work will appear here." />}</article></div>
+    <article className="panel analytics-panel"><div className="panel-header"><div><span className="overline">Model evidence</span><h3>Cost & latency</h3></div></div>{analytics.length ? <div className="compact-list">{analytics.slice(0, 5).map((item) => <div key={`${item.workflow}-${item.provider}-${item.model}`}><span><strong>{item.workflow}</strong><small>{item.provider}/{item.model} · {item.runs} runs · {item.avg_latency_seconds}s avg</small></span><small>{item.tokens} tokens · ${item.cost.toFixed(4)}</small></div>)}</div> : <EmptyState icon={Activity} title="No model usage yet" description="Completed Hermes runs will make recommendations evidence-based." />}</article>
   </section>;
 }
 
-function WorkflowsView({ workflows, drafts, selected, onSelect, onRun, onNewDraft, onEditDraft, onDuplicate, onImport }: {
+function WorkflowsView({ workflows, drafts, selected, onSelect, onRun, onNewDraft, onTemplate, onEditDraft, onDuplicate, onImport }: {
   workflows: Workflow[];
   drafts: WorkflowDraft[];
   selected: Workflow | null;
   onSelect: (workflow: Workflow) => void;
   onRun: (workflow: Workflow) => void;
   onNewDraft: () => void;
+  onTemplate: (templateId: string) => void;
   onEditDraft: (draft: WorkflowDraft) => void;
   onDuplicate: (workflow: Workflow) => void;
   onImport: () => void;
@@ -251,7 +261,7 @@ function WorkflowsView({ workflows, drafts, selected, onSelect, onRun, onNewDraf
   const [tab, setTab] = useState<"published" | "drafts">("published");
   const activeDrafts = drafts.filter((draft) => draft.status === "active");
   return <section>
-    <PageIntro eyebrow="Deterministic automation" title="Workflows" description="Build durable drafts, validate them, then publish immutable versions." action={<div className="page-actions"><button className="button secondary" onClick={onImport}><FileCode2 size={15} /> Import JSON</button><button className="button primary" onClick={onNewDraft}><Plus size={16} /> New draft</button></div>} />
+    <PageIntro eyebrow="Deterministic automation" title="Workflows" description="Build durable drafts, validate them, then publish immutable versions." action={<div className="page-actions"><select aria-label="Starter template" defaultValue="" onChange={(event) => { if (event.target.value) { onTemplate(event.target.value); event.target.value = ""; } }}><option value="">Starter template…</option><option value="research-summary">Research and summarize</option><option value="daily-briefing">Daily briefing with approval</option><option value="compare-options">Compare options</option><option value="deployment-plan">Prepare a deployment plan</option></select><button className="button secondary" onClick={onImport}><FileCode2 size={15} /> Import JSON</button><button className="button primary" onClick={onNewDraft}><Plus size={16} /> New draft</button></div>} />
     <div className="workflow-tabs"><button className={tab === "published" ? "active" : ""} onClick={() => setTab("published")}>Published <span>{workflows.length}</span></button><button className={tab === "drafts" ? "active" : ""} onClick={() => setTab("drafts")}>Drafts <span>{activeDrafts.length}</span></button></div>
     {tab === "drafts" ? <div className="draft-list panel">{activeDrafts.length ? activeDrafts.map((draft) => <button key={draft.id} onClick={() => onEditDraft(draft)}><span className="workflow-symbol draft-symbol"><FileCode2 size={16} /></span><span><strong>{draft.name}</strong><small>Revision {draft.revision} · {Object.keys(draft.definition.nodes || {}).length} nodes · Updated {relativeTime(draft.updated_at)}</small></span><Status value={draft.status} /><ChevronRight size={15} /></button>) : <EmptyState icon={FileCode2} title="No active drafts" description="Create a form-based draft or duplicate a published workflow." action={<button className="button primary" onClick={onNewDraft}>Create draft</button>} />}</div> : !workflows.length ? <EmptyState icon={GitBranch} title="No published workflows yet" description="Create a draft, validate it, and explicitly publish the first immutable version." action={<button className="button primary" onClick={onNewDraft}>Create draft</button>} /> : <div className="workflow-layout"><aside className="workflow-list">{workflows.map((workflow) => <button key={`${workflow.name}-${workflow.version}`} className={selected?.fingerprint === workflow.fingerprint ? "active" : ""} onClick={() => onSelect(workflow)}><span className="workflow-symbol"><GitBranch size={16} /></span><span><strong>{workflow.name}</strong><small>Version {workflow.version} · {Object.keys(workflow.definition.nodes).length} steps</small></span><ChevronRight size={15} /></button>)}</aside>{selected && <article className="panel workflow-detail"><header><div><span className="overline">Workflow version {selected.version}</span><h3>{selected.name}</h3><p>{selected.definition.description || "Deterministic workflow definition"}</p></div><div className="workflow-actions"><button className="button secondary" onClick={() => onDuplicate(selected)}><FileCode2 size={15} /> Edit as draft</button><button className="button primary" onClick={() => onRun(selected)}><Play size={15} /> Run</button></div></header><div className="fingerprint"><span>Fingerprint</span><code>{selected.fingerprint}</code></div><div className="workflow-canvas">{Object.entries(selected.definition.nodes).map(([id, node], index) => <div className="flow-item" key={id}>{index > 0 && <span className="flow-connector" />}<article className={`flow-node node-${node.type} ${selected.definition.start === id ? "node-start" : ""}`}><div><span className="node-type">{node.type}</span>{selected.definition.start === id && <b>Start</b>}</div><strong>{id}</strong><small>{node.next ? `Next → ${node.next}` : node.routes ? Object.entries(node.routes).map(([label, target]) => `${label} → ${target}`).join(" · ") : node.branches ? `Branches → ${node.branches.join(", ")}` : "Terminal step"}</small></article></div>)}</div></article>}</div>}
   </section>;
@@ -261,19 +271,25 @@ function NewRunModal({ open, workflows, models, preferred, token, onClose, onCre
   const [workflow, setWorkflow] = useState("");
   const [title, setTitle] = useState("");
   const [input, setInput] = useState("{}");
+  const [formInput, setFormInput] = useState<Record<string, string | number | boolean>>({});
   const [modelChoice, setModelChoice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const selectedDefinition = workflows.find((item) => item.name === workflow)?.definition;
+  const inputSchema = selectedDefinition?.input_schema;
   useEffect(() => {
     if (open) {
-      setWorkflow(preferred || workflows[0]?.name || "");
+      const nextWorkflow = preferred || workflows[0]?.name || "";
+      setWorkflow(nextWorkflow);
+      const schema = workflows.find((item) => item.name === nextWorkflow)?.definition.input_schema;
+      setFormInput(Object.fromEntries(Object.entries(schema?.properties || {}).flatMap(([name, field]) => field.default === undefined ? [] : [[name, field.default]])) as Record<string, string | number | boolean>);
       setModelChoice("");
     }
   }, [open, preferred, workflows]);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setBusy(true); setError("");
     try {
-      const parsed = JSON.parse(input);
+      const parsed = inputSchema ? formInput : JSON.parse(input);
       const selection = modelChoice ? JSON.parse(modelChoice) as [string, string] : null;
       const body = { workflow, title, input: parsed, ...(selection ? { provider: selection[0], model: selection[1] } : {}) };
       const run = await request<Run>("/api/runs", token, { method: "POST", body: JSON.stringify(body) });
@@ -283,13 +299,13 @@ function NewRunModal({ open, workflows, models, preferred, token, onClose, onCre
   };
   const current = models?.current;
   return <ModalShell open={open} title="Delegate a workflow" eyebrow="New run" onClose={onClose}><form onSubmit={submit} className="form-stack">
-    <label>Workflow<select value={workflow} onChange={(event) => setWorkflow(event.target.value)} required>{workflows.map((item) => <option key={item.fingerprint} value={item.name}>{item.name} · v{item.version}</option>)}</select></label>
+    <label>Workflow<select value={workflow} onChange={(event) => { const next = event.target.value; setWorkflow(next); const schema = workflows.find((item) => item.name === next)?.definition.input_schema; setFormInput(Object.fromEntries(Object.entries(schema?.properties || {}).flatMap(([name, field]) => field.default === undefined ? [] : [[name, field.default]])) as Record<string, string | number | boolean>); }} required>{workflows.map((item) => <option key={item.fingerprint} value={item.name}>{item.name} · v{item.version}</option>)}</select></label>
     <label>Task title <span>Optional</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What outcome do you want?" /></label>
     <label>Model<select aria-label="Model" value={modelChoice} onChange={(event) => setModelChoice(event.target.value)}>
       <option value="">Hermes default{current?.model ? ` · ${current.provider}/${current.model}` : ""}</option>
       {models?.providers.map((provider) => <optgroup key={provider.provider} label={provider.label}>{provider.models.map((model) => <option key={`${provider.provider}/${model.id}`} value={JSON.stringify([provider.provider, model.id])}>{model.id}{model.featured ? " · Featured" : ""}</option>)}</optgroup>)}
     </select><small className="field-help">{models ? "Override the Hermes default for every AI step in this run." : "Model catalog unavailable; this run will use the Hermes default."}</small></label>
-    <label>Input <span>JSON object</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={7} spellCheck={false} /></label>
+    {inputSchema ? <div className="generated-inputs"><span className="code-label">Workflow inputs</span>{Object.entries(inputSchema.properties).map(([name, field]) => <label key={name}>{field.title || name}{inputSchema.required?.includes(name) && <em>Required</em>}{field.description && <small>{field.description}</small>}{field.type === "boolean" ? <input aria-label={field.title || name} type="checkbox" checked={Boolean(formInput[name])} onChange={(event) => setFormInput({ ...formInput, [name]: event.target.checked })} /> : field.enum ? <select aria-label={field.title || name} value={String(formInput[name] ?? "")} onChange={(event) => setFormInput({ ...formInput, [name]: field.type === "number" || field.type === "integer" ? Number(event.target.value) : event.target.value })}><option value="">Select…</option>{field.enum.map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}</select> : <input aria-label={field.title || name} type={field.type === "number" || field.type === "integer" ? "number" : "text"} value={String(formInput[name] ?? "")} onChange={(event) => setFormInput({ ...formInput, [name]: field.type === "number" || field.type === "integer" ? Number(event.target.value) : event.target.value })} />}</label>)}</div> : <label>Input <span>JSON object</span><textarea value={input} onChange={(event) => setInput(event.target.value)} rows={7} spellCheck={false} /></label>}
     {error && <p className="form-error">{error}</p>}<footer><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !workflow}>{busy ? "Starting…" : "Start run"}<ArrowRight size={15} /></button></footer>
   </form></ModalShell>;
 }

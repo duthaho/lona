@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
 from cohub.api import create_server
 from cohub.__main__ import build_runtime
+from cohub.generation import WorkflowGenerationService
 
 
 WORKFLOW = {
@@ -41,6 +43,32 @@ MODEL_CATALOG = {
 }
 
 
+class UiWorkflowGenerator:
+    def submit(self, **kwargs):
+        return f"ui-designer-{kwargs['generation_id']}"
+
+    def get_status(self, external_run_id):
+        return {
+            "status": "completed",
+            "output": json.dumps({
+                "workflow": {
+                    "name": "generated-briefing",
+                    "description": "Generated safely for review.",
+                    "start": "prepare",
+                    "nodes": {
+                        "prepare": {"type": "task", "prompt": "Prepare the briefing", "next": "review"},
+                        "review": {"type": "human", "payload": {"action": "review"}, "next": "done"},
+                        "done": {"type": "end"},
+                    },
+                },
+                "assumptions": ["The run supplies source notes"],
+            }),
+        }
+
+    def stop(self, external_run_id):
+        return {"status": "stopping"}
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="cohub-ui-") as temporary:
         store, engine, worker = build_runtime(Path(temporary), "local")
@@ -60,6 +88,7 @@ def main() -> None:
             worker,
             static_dir=static_dir,
             model_catalog=lambda refresh=False: MODEL_CATALOG,
+            workflow_generation=WorkflowGenerationService(store, UiWorkflowGenerator()),
         )
         try:
             server.serve_forever()

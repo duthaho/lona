@@ -85,6 +85,10 @@ services:
       COHUB_API_TOKEN: ${COHUB_API_TOKEN:?run ./deploy.sh to generate}
       HERMES_API_BASE: http://hermes:8642
       HERMES_API_KEY: ${HERMES_API_SERVER_KEY:?run ./deploy.sh to generate}
+      # Optional dedicated Hermes profile with zero enabled API toolsets.
+      # Cohub verifies GET /v1/toolsets and fails closed before generation.
+      HERMES_DESIGNER_API_BASE: ${HERMES_DESIGNER_API_BASE:-}
+      HERMES_DESIGNER_API_KEY: ${HERMES_DESIGNER_API_KEY:-}
     command: ["--data-dir", "/data", "serve", "--host", "0.0.0.0", "--port", "8765", "--executor", "hermes"]
     volumes:
       - ./data/cohub:/data

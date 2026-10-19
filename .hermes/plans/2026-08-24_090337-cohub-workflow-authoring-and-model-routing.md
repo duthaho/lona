@@ -182,8 +182,8 @@ Create separate PRs and deploy each capability before beginning the next:
 1. ✅ **PR 1: Model catalog, selection, persistence, and usage.**
 2. ✅ **PR 2: Durable workflow drafts and form-based node editor.**
 3. ✅ **PR 3: Drag-and-drop canvas and labeled connections.**
-4. **PR 4: Restricted Hermes prompt-to-workflow generation.**
-5. **PR 5: Dynamic run-input forms, templates, and model analytics.**
+4. ✅ **PR 4: Restricted Hermes prompt-to-workflow generation.**
+5. ✅ **PR 5: Dynamic run-input forms, templates, draft history, safe simulation, and model analytics.**
 
 This order delivers the immediate reliability improvement quickly, keeps migrations reviewable, and avoids coupling model routing, a graph editor, and LLM generation into one risky release.
 

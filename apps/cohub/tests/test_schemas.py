@@ -1,7 +1,7 @@
 import copy
 import unittest
 
-from cohub.schemas import WorkflowValidationError, canonical_json, fingerprint_workflow, validate_workflow
+from cohub.schemas import WorkflowValidationError, canonical_json, fingerprint_workflow, validate_run_input, validate_workflow
 
 
 BASE_WORKFLOW = {
@@ -99,6 +99,31 @@ class WorkflowSchemaTests(unittest.TestCase):
             "additionalProperties": False,
         }
         with self.assertRaisesRegex(WorkflowValidationError, "unsupported schema keyword"):
+            validate_workflow(workflow)
+
+
+    def test_validates_declared_workflow_inputs(self):
+        workflow = copy.deepcopy(BASE_WORKFLOW)
+        workflow["input_schema"] = {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "title": "Research topic"},
+                "depth": {"type": "integer", "default": 3},
+                "approved": {"type": "boolean"},
+            },
+            "required": ["topic"],
+        }
+        normalized = validate_workflow(workflow)
+        validate_run_input(normalized, {"topic": "Hermes", "depth": 2, "approved": False})
+        with self.assertRaisesRegex(WorkflowValidationError, "topic is required"):
+            validate_run_input(normalized, {"depth": 2})
+        with self.assertRaisesRegex(WorkflowValidationError, "depth must be an integer"):
+            validate_run_input(normalized, {"topic": "Hermes", "depth": "deep"})
+
+    def test_rejects_unsupported_input_schema_shapes(self):
+        workflow = copy.deepcopy(BASE_WORKFLOW)
+        workflow["input_schema"] = {"type": "array", "properties": {}}
+        with self.assertRaisesRegex(WorkflowValidationError, "input_schema.type"):
             validate_workflow(workflow)
 
 

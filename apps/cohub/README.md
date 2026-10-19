@@ -27,7 +27,9 @@ Autonomous agents are excellent at open-ended work but should not own every cont
 - Process restart and checkpoint/resume behavior.
 - Hermes Runs API executor plus deterministic local executor.
 - Durable Hermes tool-approval bridge with same-run resume and cancellation propagation.
-- Durable workflow drafts with optimistic revisions, form-based node editing, validation, and explicit publish.
+- Durable workflow drafts with optimistic revisions, form-based node editing, validation, explicit publish, visual canvas layout, generation review, history, and safe simulations.
+- Optional `input_schema` creates validated New Run forms; four safe starter templates cover research, daily briefing, comparison, and deployment planning.
+- Model usage, cost, and latency summaries are aggregated locally from persisted run metadata.
 - Hermes Agent plugin tools.
 - Responsive local dashboard with Today, Tasks, Runs, Workflows, Approvals, and Artifacts views.
 - Token-protected JSON API.
@@ -53,6 +55,10 @@ python3 -m cohub --data-dir .cohub serve
 ```
 
 Use the **API token** button in the dashboard to save the token in browser local storage.
+
+## Safe workflow generation
+
+Set `HERMES_DESIGNER_API_BASE` only to a dedicated Hermes API profile with **all toolsets disabled**. Cohub verifies `GET /v1/toolsets` before submitting a prompt and fails closed if any toolset is enabled. It stores a durable generation record, validates strict JSON as untrusted data, blocks likely credentials, and presents a candidate for explicit acceptance. A candidate never publishes, runs, or approves anything automatically.
 
 ## Hermes executor
 
