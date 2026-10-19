@@ -28,7 +28,8 @@ Autonomous agents are excellent at open-ended work but should not own every cont
 - Hermes Runs API executor plus deterministic local executor.
 - Durable Hermes tool-approval bridge with same-run resume and cancellation propagation.
 - Durable workflow drafts with optimistic revisions, form-based node editing, validation, explicit publish, visual canvas layout, generation review, history, and safe simulations.
-- Optional `input_schema` creates validated New Run forms; four safe starter templates cover research, daily briefing, comparison, and deployment planning.
+- Optional `input_schema` creates validated New Run forms and validated, no-side-effect draft simulation forms; four safe starter templates and reusable task presets keep authoring deterministic.
+- Draft history supports executable-node comparison and restore-as-new-revision, so no historical revision is modified.
 - Model usage, cost, and latency summaries are aggregated locally from persisted run metadata.
 - Hermes Agent plugin tools.
 - Responsive local dashboard with Today, Tasks, Runs, Workflows, Approvals, and Artifacts views.
