@@ -118,13 +118,30 @@ test("starter templates expose safe simulation and revision history", async ({ p
 });
 
 
+test("sample test inputs, task presets, and revision comparison stay inside the draft", async ({ page }, testInfo) => {
+  await page.goto("/");
+  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.getByLabel("Starter template").selectOption("research-summary");
+  await expect(page.getByText("Safe test inputs")).toBeVisible();
+  await page.getByLabel("Research topic").fill("workflow controls");
+  await page.getByRole("button", { name: "Test run" }).click();
+  await expect(page.getByText("Simulation complete. No side-effect adapters were invoked.")).toBeVisible();
+  await page.getByLabel("Task preset").selectOption("summarize");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await page.getByRole("button", { name: "History" }).click();
+  await page.getByRole("button", { name: "Compare" }).click();
+  await expect(page.getByText(/Revision 2 compared with 1/)).toBeVisible();
+});
+
+
 test("Hermes generation remains a reviewed draft candidate", async ({ page }, testInfo) => {
   await page.goto("/");
   if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Open navigation" }).click();
   await page.getByRole("button", { name: "Workflows", exact: true }).click();
   await page.getByRole("button", { name: "New draft" }).click();
   await page.getByRole("button", { name: "Describe a workflow" }).click();
-  await page.getByLabel("Workflow request").fill("Create a briefing and require review before completion");
+  await page.getByLabel("Outcome").fill("Create a briefing and require review before completion");
   await page.getByRole("button", { name: "Generate candidate" }).click();
   await expect(page.getByText("Candidate ready for review")).toBeVisible();
   await expect(page.getByText("The run supplies source notes")).toBeVisible();
