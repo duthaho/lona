@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from cohub.db import CohubStore, DraftConflictError
-from cohub.schemas import WorkflowValidationError
+from cohub.schemas import WorkflowValidationError, validate_workflow
 
 
 WORKFLOW = {
@@ -169,6 +169,67 @@ class CohubStoreTests(unittest.TestCase):
         reopened = restarted.get_workflow_draft(draft["id"])
         self.assertEqual(reopened["revision"], 2)
         self.assertEqual(reopened["definition"], WORKFLOW)
+
+    def test_draft_revisions_are_immutable_and_survive_restart(self):
+        draft = self.store.create_workflow_draft({"name": "lineage", "start": "done", "nodes": {"done": {"type": "end"}}})
+        saved = self.store.update_workflow_draft(
+            draft["id"],
+            expected_revision=1,
+            definition={"name": "lineage", "description": "second", "start": "done", "nodes": {"done": {"type": "end"}}},
+        )
+
+        revisions = self.store.list_workflow_draft_revisions(draft["id"])
+        self.assertEqual([item["revision"] for item in revisions], [2, 1])
+        self.assertNotIn("description", revisions[1]["definition"])
+        self.assertEqual(revisions[0]["definition"]["description"], "second")
+
+        restarted = CohubStore(Path(self.temp.name) / "cohub.db")
+        self.assertEqual(restarted.get_workflow_draft_revision(draft["id"], 1)["definition"]["name"], "lineage")
+        self.assertEqual(saved["revision"], 2)
+
+    def test_generation_record_recovers_and_applies_candidate_atomically(self):
+        draft = self.store.create_workflow_draft({"name": "generated", "start": "done", "nodes": {"done": {"type": "end"}}})
+        generation = self.store.create_workflow_generation(
+            draft["id"],
+            prompt="Prepare a reviewed daily briefing",
+            base_revision=1,
+            provider="openai-codex",
+            model="gpt-5.6",
+            kind="generate",
+        )
+        self.assertEqual(generation["status"], "queued")
+        running = self.store.attach_workflow_generation_run(generation["id"], "hermes-generation-1")
+        self.assertEqual(running["status"], "running")
+
+        restarted = CohubStore(Path(self.temp.name) / "cohub.db")
+        recovered = restarted.get_workflow_generation(generation["id"])
+        self.assertEqual(recovered["hermes_run_id"], "hermes-generation-1")
+        candidate = {
+            "name": "generated",
+            "start": "draft",
+            "nodes": {"draft": {"type": "task", "prompt": "Draft briefing", "next": "done"}, "done": {"type": "end"}},
+        }
+        completed = restarted.apply_workflow_generation_candidate(
+            generation["id"],
+            candidate=candidate,
+            candidate_hash="sha256:abc",
+            diagnostics=[],
+            assumptions=["Sources are supplied as run inputs"],
+        )
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(completed["result_revision"], 2)
+        self.assertEqual(restarted.get_workflow_draft(draft["id"])["definition"], validate_workflow(candidate))
+        self.assertEqual(restarted.list_workflow_draft_revisions(draft["id"])[0]["source_generation_id"], generation["id"])
+
+        repeated = restarted.apply_workflow_generation_candidate(
+            generation["id"],
+            candidate=candidate,
+            candidate_hash="sha256:abc",
+            diagnostics=[],
+            assumptions=["Sources are supplied as run inputs"],
+        )
+        self.assertEqual(repeated["result_revision"], 2)
+        self.assertEqual(restarted.get_workflow_draft(draft["id"])["revision"], 2)
 
     def test_duplicate_validate_and_explicitly_publish_draft(self):
         version = self.store.publish_workflow(WORKFLOW)

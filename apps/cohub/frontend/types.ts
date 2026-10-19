@@ -53,7 +53,22 @@ export type WorkflowDefinition = {
   description?: string;
   start: string;
   defaults?: { max_attempts?: number };
+  input_schema?: InputSchema;
   nodes: Record<string, WorkflowNode>;
+};
+
+export type InputFieldSchema = {
+  type: "string" | "number" | "integer" | "boolean";
+  title?: string;
+  description?: string;
+  default?: string | number | boolean;
+  enum?: Array<string | number>;
+};
+
+export type InputSchema = {
+  type: "object";
+  properties: Record<string, InputFieldSchema>;
+  required?: string[];
 };
 
 export type Workflow = {
@@ -79,6 +94,20 @@ export type WorkflowDraft = {
 };
 
 export type DraftDiagnostic = { path: string; message: string };
+
+export type WorkflowGeneration = {
+  id: string;
+  draft_id: string;
+  kind: "generate" | "revise";
+  prompt: string;
+  base_revision: number;
+  result_revision?: number;
+  status: string;
+  candidate?: WorkflowDefinition;
+  assumptions: string[];
+  diagnostics: DraftDiagnostic[];
+  error?: string;
+};
 
 export type Artifact = { path: string; sha256: string; size: number };
 export type Step = { step_id: string; status: string; attempt: number; reason?: string; error?: string };

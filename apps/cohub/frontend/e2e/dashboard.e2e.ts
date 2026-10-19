@@ -105,6 +105,37 @@ test("operator can save, reopen, validate, and publish a form-based workflow dra
   await expect(page.getByRole("heading", { name: workflowName })).toBeVisible();
 });
 
+test("starter templates expose safe simulation and revision history", async ({ page }, testInfo) => {
+  await page.goto("/");
+  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.getByLabel("Starter template").selectOption("daily-briefing");
+  await expect(page.getByRole("heading", { name: "daily-briefing" })).toBeVisible();
+  await page.getByRole("button", { name: "Test run" }).click();
+  await expect(page.getByText("Simulation complete. No side-effect adapters were invoked.")).toBeVisible();
+  await page.getByRole("button", { name: "History" }).click();
+  await expect(page.getByText("Draft history")).toBeVisible();
+});
+
+
+test("Hermes generation remains a reviewed draft candidate", async ({ page }, testInfo) => {
+  await page.goto("/");
+  if (testInfo.project.name === "mobile") await page.getByRole("button", { name: "Open navigation" }).click();
+  await page.getByRole("button", { name: "Workflows", exact: true }).click();
+  await page.getByRole("button", { name: "New draft" }).click();
+  await page.getByRole("button", { name: "Describe a workflow" }).click();
+  await page.getByLabel("Workflow request").fill("Create a briefing and require review before completion");
+  await page.getByRole("button", { name: "Generate candidate" }).click();
+  await expect(page.getByText("Candidate ready for review")).toBeVisible();
+  await expect(page.getByText("The run supplies source notes")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "untitled-workflow" })).toBeVisible();
+  await page.getByRole("button", { name: "Accept into draft" }).click();
+  await expect(page.getByText("Candidate accepted as revision 2. Review before publishing.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "generated-briefing" })).toBeVisible();
+  await expect(page.getByLabel("Canvas node prepare")).toBeVisible();
+});
+
+
 test("JSON import creates an editable draft instead of publishing", async ({ page }, testInfo) => {
   const workflowName = `imported-report-${testInfo.project.name}`;
   await page.goto("/");

@@ -67,6 +67,40 @@ CREATE TABLE IF NOT EXISTS workflow_drafts (
 );
 CREATE INDEX IF NOT EXISTS workflow_drafts_status ON workflow_drafts(status, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS workflow_generations (
+    id TEXT PRIMARY KEY,
+    draft_id TEXT NOT NULL REFERENCES workflow_drafts(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    base_revision INTEGER NOT NULL,
+    result_revision INTEGER,
+    provider TEXT,
+    model TEXT,
+    hermes_run_id TEXT UNIQUE,
+    status TEXT NOT NULL,
+    candidate_json TEXT,
+    candidate_hash TEXT,
+    diagnostics_json TEXT NOT NULL DEFAULT '[]',
+    assumptions_json TEXT NOT NULL DEFAULT '[]',
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS workflow_generations_draft ON workflow_generations(draft_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS workflow_generations_status ON workflow_generations(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS workflow_draft_revisions (
+    draft_id TEXT NOT NULL REFERENCES workflow_drafts(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    definition_json TEXT NOT NULL,
+    layout_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    source_generation_id TEXT REFERENCES workflow_generations(id),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY(draft_id, revision)
+);
+
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -205,6 +239,13 @@ class CohubStore:
                 "reported_model": "TEXT",
                 "usage_json": "TEXT NOT NULL DEFAULT '{}'",
             })
+            connection.execute(
+                """INSERT OR IGNORE INTO workflow_draft_revisions(
+                       draft_id,revision,definition_json,layout_json,source,created_at
+                   )
+                   SELECT id,revision,definition_json,layout_json,'migration',updated_at
+                   FROM workflow_drafts"""
+            )
 
     @staticmethod
     def _add_columns(connection: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
@@ -308,6 +349,12 @@ class CohubStore:
                     now,
                 ),
             )
+            connection.execute(
+                """INSERT INTO workflow_draft_revisions(
+                       draft_id,revision,definition_json,layout_json,source,created_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (draft_id, 1, canonical_json(definition), canonical_json(layout or {}), "created", now),
+            )
             row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
             return _decode(row, ("definition_json", "layout_json"))  # type: ignore[return-value]
 
@@ -359,6 +406,7 @@ class CohubStore:
             current_layout = json.loads(current["layout_json"])
             next_definition = definition if definition is not None else current_definition
             next_layout = layout if layout is not None else current_layout
+            now = utc_now()
             result = connection.execute(
                 """UPDATE workflow_drafts
                    SET name=?,definition_json=?,layout_json=?,revision=revision+1,updated_at=?
@@ -367,13 +415,26 @@ class CohubStore:
                     self._draft_name(next_definition, current["name"]),
                     canonical_json(next_definition),
                     canonical_json(next_layout),
-                    utc_now(),
+                    now,
                     draft_id,
                     expected_revision,
                 ),
             )
             if result.rowcount != 1:
                 raise DraftConflictError("workflow draft revision is stale")
+            connection.execute(
+                """INSERT INTO workflow_draft_revisions(
+                       draft_id,revision,definition_json,layout_json,source,created_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (
+                    draft_id,
+                    expected_revision + 1,
+                    canonical_json(next_definition),
+                    canonical_json(next_layout),
+                    "manual",
+                    now,
+                ),
+            )
             row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
             return _decode(row, ("definition_json", "layout_json"))  # type: ignore[return-value]
 
@@ -397,11 +458,264 @@ class CohubStore:
             )
             if result.rowcount != 1:
                 raise DraftConflictError("workflow draft revision is stale")
+            connection.execute(
+                """INSERT INTO workflow_draft_revisions(
+                       draft_id,revision,definition_json,layout_json,source,created_at
+                   ) VALUES(?,?,?,?,?,?)""",
+                (
+                    draft_id,
+                    expected_revision + 1,
+                    current["definition_json"],
+                    current["layout_json"],
+                    "published",
+                    now,
+                ),
+            )
             row = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
             return {
                 "draft": _decode(row, ("definition_json", "layout_json")),
                 "workflow": workflow,
             }
+
+    def list_workflow_draft_revisions(self, draft_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM workflow_draft_revisions WHERE draft_id=? ORDER BY revision DESC",
+                (draft_id,),
+            ).fetchall()
+            return [_decode(row, ("definition_json", "layout_json")) for row in rows]  # type: ignore[misc]
+
+    def get_workflow_draft_revision(self, draft_id: str, revision: int) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM workflow_draft_revisions WHERE draft_id=? AND revision=?",
+                (draft_id, revision),
+            ).fetchone()
+            return _decode(row, ("definition_json", "layout_json"))
+
+    @staticmethod
+    def _decode_generation(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        return _decode(row, ("candidate_json", "diagnostics_json", "assumptions_json"))
+
+    def restore_workflow_draft_revision(
+        self,
+        draft_id: str,
+        revision: int,
+        *,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        historical = self.get_workflow_draft_revision(draft_id, revision)
+        if historical is None:
+            raise KeyError(f"workflow draft revision not found: {draft_id}@{revision}")
+        return self.update_workflow_draft(
+            draft_id,
+            expected_revision=expected_revision,
+            definition=historical["definition"],
+            layout=historical["layout"],
+        )
+
+    def create_workflow_generation(
+        self,
+        draft_id: str,
+        *,
+        prompt: str,
+        base_revision: int,
+        provider: str | None = None,
+        model: str | None = None,
+        kind: str = "generate",
+    ) -> dict[str, Any]:
+        if kind not in {"generate", "revise"}:
+            raise ValueError("generation kind must be generate or revise")
+        cleaned_prompt = prompt.strip()
+        if not cleaned_prompt or len(cleaned_prompt) > 20_000:
+            raise ValueError("generation prompt must be between 1 and 20000 characters")
+        generation_id, now = _id("generation"), utc_now()
+        with self.connection() as connection:
+            draft = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (draft_id,)).fetchone()
+            if draft is None:
+                raise KeyError(f"workflow draft not found: {draft_id}")
+            if draft["status"] != "active":
+                raise DraftConflictError("published workflow drafts are immutable")
+            if int(draft["revision"]) != base_revision:
+                raise DraftConflictError("workflow draft revision is stale")
+            connection.execute(
+                """INSERT INTO workflow_generations(
+                       id,draft_id,kind,prompt,base_revision,provider,model,status,
+                       diagnostics_json,assumptions_json,created_at,updated_at
+                   ) VALUES(?,?,?,?,?,?,?,'queued','[]','[]',?,?)""",
+                (generation_id, draft_id, kind, cleaned_prompt, base_revision, provider, model, now, now),
+            )
+            row = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            return self._decode_generation(row)  # type: ignore[return-value]
+
+    def get_workflow_generation(self, generation_id: str) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            return self._decode_generation(row)
+
+    def list_workflow_generations(self, draft_id: str) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM workflow_generations WHERE draft_id=? ORDER BY created_at DESC",
+                (draft_id,),
+            ).fetchall()
+            return [self._decode_generation(row) for row in rows]  # type: ignore[misc]
+
+    def attach_workflow_generation_run(self, generation_id: str, hermes_run_id: str) -> dict[str, Any]:
+        if not hermes_run_id:
+            raise ValueError("Hermes run ID is required")
+        with self.connection() as connection:
+            current = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            if current is None:
+                raise KeyError(f"workflow generation not found: {generation_id}")
+            if current["hermes_run_id"]:
+                if current["hermes_run_id"] != hermes_run_id:
+                    raise DraftConflictError("workflow generation already has a different Hermes run")
+                return self._decode_generation(current)  # type: ignore[return-value]
+            if current["status"] != "queued":
+                raise DraftConflictError("workflow generation cannot be submitted in its current state")
+            connection.execute(
+                """UPDATE workflow_generations
+                   SET hermes_run_id=?,status='running',updated_at=? WHERE id=? AND status='queued'""",
+                (hermes_run_id, utc_now(), generation_id),
+            )
+            row = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            return self._decode_generation(row)  # type: ignore[return-value]
+
+    def fail_workflow_generation(
+        self,
+        generation_id: str,
+        *,
+        error: str,
+        diagnostics: list[dict[str, str]] | None = None,
+        candidate_hash: str | None = None,
+    ) -> dict[str, Any]:
+        with self.connection() as connection:
+            current = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            if current is None:
+                raise KeyError(f"workflow generation not found: {generation_id}")
+            if current["status"] == "completed":
+                return self._decode_generation(current)  # type: ignore[return-value]
+            now = utc_now()
+            connection.execute(
+                """UPDATE workflow_generations
+                   SET status='failed',candidate_json=NULL,candidate_hash=?,diagnostics_json=?,error=?,
+                       updated_at=?,completed_at=? WHERE id=?""",
+                (candidate_hash, canonical_json(diagnostics or []), error[:1000], now, now, generation_id),
+            )
+            row = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            return self._decode_generation(row)  # type: ignore[return-value]
+
+    def stage_workflow_generation_candidate(
+        self,
+        generation_id: str,
+        *,
+        candidate: dict[str, Any],
+        candidate_hash: str,
+        diagnostics: list[dict[str, str]],
+        assumptions: list[str],
+    ) -> dict[str, Any]:
+        normalized = validate_workflow(candidate)
+        with self.connection() as connection:
+            generation = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            if generation is None:
+                raise KeyError(f"workflow generation not found: {generation_id}")
+            if generation["status"] in {"candidate_ready", "completed"}:
+                return self._decode_generation(generation)  # type: ignore[return-value]
+            if generation["status"] not in {"queued", "running", "candidate_ready"}:
+                raise DraftConflictError("workflow generation is not active")
+            now = utc_now()
+            connection.execute(
+                """UPDATE workflow_generations
+                   SET status='candidate_ready',candidate_json=?,candidate_hash=?,diagnostics_json=?,
+                       assumptions_json=?,error=NULL,updated_at=? WHERE id=?""",
+                (
+                    canonical_json(normalized), candidate_hash, canonical_json(diagnostics),
+                    canonical_json(assumptions), now, generation_id,
+                ),
+            )
+            row = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            return self._decode_generation(row)  # type: ignore[return-value]
+
+    def accept_workflow_generation_candidate(self, generation_id: str, *, expected_revision: int) -> dict[str, Any]:
+        generation = self.get_workflow_generation(generation_id)
+        if generation is None:
+            raise KeyError(f"workflow generation not found: {generation_id}")
+        if generation["status"] == "completed":
+            return generation
+        if generation["status"] != "candidate_ready" or not isinstance(generation.get("candidate"), dict):
+            raise DraftConflictError("workflow generation has no candidate ready for review")
+        if int(generation["base_revision"]) != expected_revision:
+            raise DraftConflictError("workflow generation base revision does not match")
+        return self.apply_workflow_generation_candidate(
+            generation_id,
+            candidate=generation["candidate"],
+            candidate_hash=str(generation["candidate_hash"]),
+            diagnostics=generation["diagnostics"],
+            assumptions=generation["assumptions"],
+        )
+
+    def apply_workflow_generation_candidate(
+        self,
+        generation_id: str,
+        *,
+        candidate: dict[str, Any],
+        candidate_hash: str,
+        diagnostics: list[dict[str, str]],
+        assumptions: list[str],
+    ) -> dict[str, Any]:
+        normalized = validate_workflow(candidate)
+        with self.connection() as connection:
+            generation = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            if generation is None:
+                raise KeyError(f"workflow generation not found: {generation_id}")
+            if generation["status"] == "completed":
+                return self._decode_generation(generation)  # type: ignore[return-value]
+            if generation["status"] not in {"queued", "running", "candidate_ready"}:
+                raise DraftConflictError("workflow generation is not active")
+            draft = connection.execute("SELECT * FROM workflow_drafts WHERE id=?", (generation["draft_id"],)).fetchone()
+            if draft is None:
+                raise KeyError(f"workflow draft not found: {generation['draft_id']}")
+            if draft["status"] != "active" or int(draft["revision"]) != int(generation["base_revision"]):
+                raise DraftConflictError("workflow draft changed while generation was running")
+            next_revision = int(generation["base_revision"]) + 1
+            now = utc_now()
+            result = connection.execute(
+                """UPDATE workflow_drafts
+                   SET name=?,definition_json=?,revision=?,updated_at=?
+                   WHERE id=? AND status='active' AND revision=?""",
+                (
+                    self._draft_name(normalized, draft["name"]),
+                    canonical_json(normalized),
+                    next_revision,
+                    now,
+                    draft["id"],
+                    generation["base_revision"],
+                ),
+            )
+            if result.rowcount != 1:
+                raise DraftConflictError("workflow draft revision is stale")
+            connection.execute(
+                """INSERT INTO workflow_draft_revisions(
+                       draft_id,revision,definition_json,layout_json,source,source_generation_id,created_at
+                   ) VALUES(?,?,?,?,?,?,?)""",
+                (
+                    draft["id"], next_revision, canonical_json(normalized), draft["layout_json"],
+                    "generated", generation_id, now,
+                ),
+            )
+            connection.execute(
+                """UPDATE workflow_generations
+                   SET status='completed',result_revision=?,candidate_json=?,candidate_hash=?,
+                       diagnostics_json=?,assumptions_json=?,error=NULL,updated_at=?,completed_at=?
+                   WHERE id=?""",
+                (
+                    next_revision, canonical_json(normalized), candidate_hash,
+                    canonical_json(diagnostics), canonical_json(assumptions), now, now, generation_id,
+                ),
+            )
+            row = connection.execute("SELECT * FROM workflow_generations WHERE id=?", (generation_id,)).fetchone()
+            return self._decode_generation(row)  # type: ignore[return-value]
 
     def create_task(self, title: str, input_data: dict[str, Any] | None = None) -> dict[str, Any]:
         task_id, now = _id("task"), utc_now()
@@ -459,6 +773,51 @@ class CohubStore:
                 (run_id,),
             ).fetchone()
             return _decode(row, ("input_json", "usage_json"))
+
+    def workflow_analytics(self) -> list[dict[str, Any]]:
+        """Aggregate persisted usage and elapsed time without contacting providers."""
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM runs ORDER BY created_at DESC LIMIT 10000"
+            ).fetchall()
+        groups: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for row in rows:
+            run = _decode(row, ("input_json", "usage_json"))
+            assert isinstance(run, dict)
+            executions = self.list_external_executions(run["id"])
+            provider = run.get("requested_provider") or "default"
+            model = run.get("requested_model") or "default"
+            usage: dict[str, Any] = dict(run.get("usage") or {})
+            for execution in executions:
+                provider = execution.get("reported_provider") or execution.get("requested_provider") or provider
+                model = execution.get("reported_model") or execution.get("requested_model") or model
+                for key, value in (execution.get("usage") or {}).items():
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        usage[key] = usage.get(key, 0) + value
+            key = (run["workflow_name"], str(provider), str(model))
+            group = groups.setdefault(key, {
+                "workflow": run["workflow_name"], "provider": provider, "model": model,
+                "runs": 0, "completed": 0, "failed": 0, "tokens": 0.0, "cost": 0.0, "latency_seconds": 0.0,
+            })
+            group["runs"] += 1
+            group["completed"] += int(run["status"] == "completed")
+            group["failed"] += int(run["status"] == "failed")
+            group["tokens"] += sum(float(value) for name, value in usage.items() if name in {"total_tokens", "input_tokens", "output_tokens"} and isinstance(value, (int, float)) and not isinstance(value, bool))
+            group["cost"] += sum(float(value) for name, value in usage.items() if name in {"cost", "total_cost", "cost_usd", "total_cost_usd"} and isinstance(value, (int, float)) and not isinstance(value, bool))
+            try:
+                started = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+                ended = datetime.fromisoformat((run.get("completed_at") or run["updated_at"]).replace("Z", "+00:00"))
+                group["latency_seconds"] += max(0.0, (ended - started).total_seconds())
+            except (KeyError, TypeError, ValueError):
+                pass
+        result = []
+        for group in groups.values():
+            runs = group["runs"]
+            group["avg_latency_seconds"] = round(group.pop("latency_seconds") / runs, 3) if runs else 0.0
+            group["tokens"] = round(group["tokens"], 3)
+            group["cost"] = round(group["cost"], 6)
+            result.append(group)
+        return sorted(result, key=lambda item: (-item["runs"], item["workflow"], item["provider"], item["model"]))
 
     def list_runs(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.connection() as connection:

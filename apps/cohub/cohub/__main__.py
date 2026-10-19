@@ -10,7 +10,8 @@ from pathlib import Path
 from .api import create_server
 from .db import CohubStore
 from .engine import WorkflowEngine
-from .executors import HermesRunsExecutor, LocalExecutor
+from .executors import HermesRunsExecutor, HermesWorkflowGenerator, LocalExecutor
+from .generation import WorkflowGenerationService
 from .service import WorkerService
 
 
@@ -71,6 +72,13 @@ def main() -> None:
         print(json.dumps(status, indent=2))
         return
     static_dir = Path(__file__).resolve().parent / "static"
+    generation = None
+    designer_base = os.environ.get("HERMES_DESIGNER_API_BASE", "").strip()
+    if designer_base:
+        designer_key = os.environ.get("HERMES_DESIGNER_API_KEY", "") or os.environ.get("HERMES_API_KEY", "")
+        if not designer_key:
+            raise SystemExit("HERMES_DESIGNER_API_KEY or HERMES_API_KEY is required for workflow generation")
+        generation = WorkflowGenerationService(store, HermesWorkflowGenerator(designer_base, designer_key))
     server = create_server(
         args.host,
         args.port,
@@ -80,6 +88,7 @@ def main() -> None:
         static_dir=static_dir,
         api_token=args.api_token,
         model_catalog=getattr(worker.executor, "get_model_catalog", None),
+        workflow_generation=generation,
     )
     print(f"Cohub dashboard: http://{args.host}:{server.server_port}")
     print(f"Data directory: {args.data_dir.resolve()}")

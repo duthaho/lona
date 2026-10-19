@@ -293,3 +293,61 @@ class HermesRunsExecutor:
             reason=value.get("reason"),
             artifacts=tuple(value.get("artifacts", [])),
         )
+
+
+WORKFLOW_DESIGNER_INSTRUCTIONS = """You are Cohub's restricted workflow designer. Never call tools, request approvals, publish, run, or execute the workflow. Return exactly one JSON object with keys workflow and assumptions and no markdown. The workflow may use only task, decision, parallel, human, and end nodes. Parallel branches must be direct one-step task nodes. Side effects must be marked side_effect=true with approval_payload. Never include credentials or secrets. The user will review and explicitly publish any accepted candidate."""
+
+
+class HermesWorkflowGenerator:
+    """Use a dedicated, verified tool-free Hermes profile for workflow design."""
+
+    def __init__(self, base_url: str, api_key: str, timeout: float = 300.0):
+        self._client = HermesRunsExecutor(base_url, api_key, timeout=timeout)
+
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        return self._client._request(method, path, payload)
+
+    def get_status(self, external_run_id: str) -> dict[str, Any]:
+        return self._client.get_status(external_run_id)
+
+    def stop(self, external_run_id: str) -> dict[str, Any]:
+        return self._client.stop(external_run_id)
+
+    def _require_tool_free_profile(self) -> None:
+        catalog = self._request("GET", "/v1/toolsets")
+        data = catalog.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("Hermes designer tool surface could not be verified")
+        enabled = [item for item in data if isinstance(item, dict) and item.get("enabled")]
+        if enabled:
+            raise RuntimeError("Hermes designer profile must have all executable tools disabled")
+
+    def submit(
+        self,
+        *,
+        generation_id: str,
+        prompt: str,
+        current_workflow: dict[str, Any],
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> str:
+        if bool(provider) != bool(model):
+            raise ValueError("provider and model must be selected together")
+        self._require_tool_free_profile()
+        payload: dict[str, Any] = {
+            "input": (
+                f"User request:\n{prompt}\n\n"
+                f"Current editable workflow:\n{canonical_json(current_workflow)}\n\n"
+                "Create a complete candidate that follows the response contract."
+            ),
+            "instructions": WORKFLOW_DESIGNER_INSTRUCTIONS,
+            "session_id": f"cohub-generation:{generation_id}",
+        }
+        if provider and model:
+            payload["provider"] = provider
+            payload["model"] = model
+        response = self._request("POST", "/v1/runs", payload)
+        run_id = response.get("run_id") or response.get("id")
+        if not isinstance(run_id, str) or not run_id:
+            raise RuntimeError("Hermes designer did not return a run ID")
+        return run_id
