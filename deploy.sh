@@ -114,6 +114,22 @@ ensure_env() {
   [ -n "$(env_val OPENROUTER_API_KEY)" ] || die "OPENROUTER_API_KEY is empty — edit .env and re-run."
 }
 
+seed_hermes_profiles() {
+  [ -d config/hermes/profiles ] || return 0
+  for profile_src in config/hermes/profiles/*/; do
+    [ -d "$profile_src" ] || continue
+    profile_name="$(basename "$profile_src")"
+    profile_dst="data/hermes/profiles/$profile_name"
+    if [ ! -d "$profile_dst" ]; then
+      say "Seeding specialist profile: $profile_name"
+      mkdir -p "$profile_dst"
+      for f in SOUL.md config.yaml; do
+        [ -f "${profile_src}${f}" ] && cp "${profile_src}${f}" "${profile_dst}/${f}"
+      done
+    fi
+  done
+}
+
 seed_config() {
   case "$PLATFORM" in
     openclaw)
@@ -129,6 +145,11 @@ seed_config() {
         say "Seeding data/hermes/config.yaml"
         cp config/hermes/config.yaml data/hermes/config.yaml
       fi
+      if [ ! -f data/hermes/SOUL.md ] && [ -f config/hermes/SOUL.md ]; then
+        say "Seeding data/hermes/SOUL.md"
+        cp config/hermes/SOUL.md data/hermes/SOUL.md
+      fi
+      seed_hermes_profiles
       set_env_var HERMES_UID "$(id -u)"
       set_env_var HERMES_GID "$(id -g)"
       ;;
@@ -374,6 +395,7 @@ os.replace(tmp, os.environ['LIVE'])
 print('   template keys applied:', ', '.join(sorted(tmpl)))
 print('   live-only keys preserved:', ', '.join(live_only) or '(none)')
 PY
+        seed_hermes_profiles
         propagate_hermes_secrets
         if is_running; then
           say "Applying merged config (restarting hermes)"
