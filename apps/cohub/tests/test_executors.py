@@ -203,6 +203,24 @@ class ExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "planned failure"):
             executor.execute(claimed)
 
+    def test_model_catalog_returns_last_known_catalog_when_refresh_fails(self):
+        executor = HermesRunsExecutor("http://example.invalid", "test")
+        responses = [
+            {"provider": "openai", "model": "gpt-5.6", "providers": [{"authenticated": True, "slug": "openai", "models": ["gpt-5.6"]}]},
+            RuntimeError("upstream unavailable"),
+        ]
+        def request(*_args, **_kwargs):
+            value = responses.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        executor._request = request  # type: ignore[method-assign]
+        fresh = executor.get_model_catalog()
+        stale = executor.get_model_catalog(refresh=True)
+        self.assertEqual(fresh["status"]["state"], "fresh")
+        self.assertEqual(stale["status"]["state"], "stale")
+        self.assertEqual(stale["providers"][0]["provider"], "openai")
+
     def test_hermes_executor_submits_correlated_run_and_maps_result(self):
         FakeHermesHandler.calls = []
         server = ThreadingHTTPServer(("127.0.0.1", 0), FakeHermesHandler)

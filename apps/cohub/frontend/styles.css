@@ -365,6 +365,7 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 .check-row strong { font-size: 10px; font-weight: 550; }
 .check-row small { color: var(--faint); font-size: 9px; }
 .field-label { color: var(--text-2); font-size: 10px; }
+.warning-text { color: #e4bd70; }
 .field-error { color: #ff9da5; }
 .route-editor { gap: 8px; }
 .route-row, .route-add { display: grid; grid-template-columns: minmax(100px,.7fr) minmax(140px,1fr) auto; gap: 7px; align-items: center; }

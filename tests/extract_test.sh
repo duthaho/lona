@@ -58,8 +58,8 @@ echo "   openclaw extraction ok"
 # --- Hermes: template fallback — default, fallback_model, auxiliary, in order
 out="$(scripts/doctor.sh hermes --print-chain)"
 expected='openrouter:nvidia/nemotron-3-ultra-550b-a55b:free
-openrouter:nvidia/nemotron-3-super-120b-a12b:free
-openrouter:nvidia/nemotron-3-nano-30b-a3b:free'
+openrouter:nvidia/nemotron-3.5-super-vl:free
+openrouter:nvidia/nemotron-3.5-lightning:free'
 assert_eq "$expected" "$out" "(hermes template chain)"
 
 # --- Hermes: seeded data/ precedence + gemini provider detection
