@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import time
@@ -151,13 +152,18 @@ class HermesRunsExecutor:
         return str(hermes_run_id)
 
     def get_model_catalog(self, refresh: bool = False) -> dict[str, Any]:
-        """Return a credential-free catalog of authenticated Hermes models."""
+        """Return a redacted catalog, preserving last-known choices during an upstream outage."""
 
         age = time.monotonic() - self._model_catalog_at
         if self._model_catalog is not None and not refresh and age < 60:
-            return self._model_catalog
+            return self._catalog_with_status("fresh", age_seconds=age)
         suffix = "true" if refresh else "false"
-        raw = self._request("GET", f"/api/model/options?refresh={suffix}")
+        try:
+            raw = self._request("GET", f"/api/model/options?refresh={suffix}")
+        except (HermesApiError, OSError, RuntimeError, TimeoutError) as exc:
+            if self._model_catalog is not None:
+                return self._catalog_with_status("stale", age_seconds=age, message="Hermes model catalog is temporarily unavailable; showing the last known catalog")
+            raise RuntimeError("Hermes model catalog is unavailable; workflow defaults will be used") from exc
         providers = []
         for row in raw.get("providers", []):
             if not isinstance(row, dict) or row.get("authenticated") is not True:
@@ -196,7 +202,17 @@ class HermesRunsExecutor:
         }
         self._model_catalog = catalog
         self._model_catalog_at = time.monotonic()
-        return catalog
+        return self._catalog_with_status("fresh", age_seconds=0.0)
+
+    def _catalog_with_status(self, state: str, *, age_seconds: float, message: str | None = None) -> dict[str, Any]:
+        assert self._model_catalog is not None
+        response = copy.deepcopy(self._model_catalog)
+        response["status"] = {
+            "state": state,
+            "age_seconds": max(0, round(age_seconds, 1)),
+            **({"message": message} if message else {}),
+        }
+        return response
 
     def get_status(self, hermes_run_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/runs/{hermes_run_id}")

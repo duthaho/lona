@@ -129,6 +129,7 @@ export type ModelProvider = { provider: string; label: string; models: ModelOpti
 export type ModelCatalog = {
   current: { provider: string; model: string };
   providers: ModelProvider[];
+  status?: { state: "fresh" | "stale"; age_seconds: number; message?: string };
 };
 
 export type RunDetail = Run & {

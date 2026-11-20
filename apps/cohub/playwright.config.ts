@@ -1,5 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+const browserOverride = chromiumExecutable ? { launchOptions: { executablePath: chromiumExecutable } } : {};
+
 export default defineConfig({
   testDir: "./frontend/e2e",
   testMatch: "**/*.e2e.ts",
@@ -11,8 +14,8 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile", use: { ...devices["Pixel 7"] } },
+    { name: "desktop", use: { ...devices["Desktop Chrome"], ...browserOverride } },
+    { name: "mobile", use: { ...devices["Pixel 7"], ...browserOverride } },
   ],
   webServer: {
     command: "python3 -m tests.ui_server",
