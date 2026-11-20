@@ -37,7 +37,7 @@ MODEL_CATALOG = {
         {
             "provider": "openai-codex",
             "label": "OpenAI Codex",
-            "models": [{"id": "gpt-5.6", "featured": True}],
+            "models": [{"id": "gpt-5.6", "featured": True, "pricing": {"input": "$2/M", "output": "$8/M"}, "capabilities": {"structured_output": True, "tools": True}}],
         }
     ],
 }

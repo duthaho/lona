@@ -30,7 +30,7 @@ Autonomous agents are excellent at open-ended work but should not own every cont
 - Durable workflow drafts with optimistic revisions, form-based node editing, validation, explicit publish, visual canvas layout, generation review, history, and safe simulations.
 - Optional `input_schema` creates validated New Run forms and validated, no-side-effect draft simulation forms; four safe starter templates and reusable task presets keep authoring deterministic.
 - Draft history supports executable-node comparison and restore-as-new-revision, so no historical revision is modified.
-- Model usage, cost, and latency summaries are aggregated locally from persisted run metadata. The model catalog is cached briefly and falls back to a redacted last-known catalog during a Hermes outage; the run inspector shows requested versus effective model evidence, token totals, elapsed time, retries, and provider-reported fallback errors without contacting a provider.
+- Model usage, cost, and latency summaries are aggregated locally from persisted run metadata. The model catalog is cached briefly and falls back to a redacted last-known catalog during a Hermes outage; the searchable picker shows provider capability and pricing metadata when Hermes supplies it. The run inspector shows requested versus effective model evidence, token totals, elapsed time, retries, and provider-reported fallback errors without contacting a provider.
 - Hermes Agent plugin tools.
 - Responsive local dashboard with Today, Tasks, Runs, Workflows, Approvals, and Artifacts views.
 - Token-protected JSON API.
