@@ -88,6 +88,7 @@ def main() -> None:
             worker,
             static_dir=static_dir,
             model_catalog=lambda refresh=False: MODEL_CATALOG,
+            hermes_capabilities=lambda: {"features": {"run_approval_response": True, "approval_events": True}},
             workflow_generation=WorkflowGenerationService(store, UiWorkflowGenerator()),
         )
         try:

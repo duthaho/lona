@@ -81,6 +81,7 @@ function App() {
   const [drafts, setDrafts] = useState<WorkflowDraft[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog | null>(null);
+  const [hermesCapabilities, setHermesCapabilities] = useState<Record<string, boolean> | null>(null);
   const [analytics, setAnalytics] = useState<Array<{ workflow: string; provider: string; model: string; runs: number; completed: number; failed: number; tokens: number; cost: number; avg_latency_seconds: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
@@ -119,6 +120,8 @@ function App() {
       setSelectedWorkflow((current) => current || allWorkflows.workflows[0] || null);
       try { setModelCatalog(await request<ModelCatalog>("/api/hermes/models", token)); }
       catch { setModelCatalog(null); }
+      try { const capabilityResponse = await request<{ features: Record<string, boolean> }>("/api/hermes/capabilities", token); setHermesCapabilities(capabilityResponse.features); }
+      catch { setHermesCapabilities(null); }
       setAuthRequired(false); setError("");
     } catch (caught) {
       const apiError = caught as Error & { status?: number };
@@ -193,7 +196,7 @@ function App() {
     <aside className={`sidebar ${mobileNav ? "sidebar-open" : ""}`}>
       <div className="brand-lockup"><span className="brand-mark"><Bot size={19} /></span><div><strong>Cohub</strong><small>Personal coworker</small></div><button className="mobile-close" onClick={() => setMobileNav(false)}><X size={18} /></button></div>
       <nav>{navItems.map(([name, label, Icon]) => <button key={name} className={view === name ? "active" : ""} onClick={() => navigate(name)}><Icon size={17} /><span>{label}</span>{name === "approvals" && approvals.length > 0 && <b>{approvals.length}</b>}</button>)}</nav>
-      <div className="sidebar-footer"><span className="live-dot" /><div><strong>Local control plane</strong><small>Auto-refreshing every 10s</small></div></div>
+      <div className="sidebar-footer"><span className={hermesCapabilities?.run_approval_response && hermesCapabilities?.approval_events ? "live-dot" : "live-dot degraded"} /><div><strong>Local control plane</strong><small>{hermesCapabilities ? (hermesCapabilities.run_approval_response && hermesCapabilities.approval_events ? "Hermes approval bridge ready" : "Hermes approval bridge unavailable") : "Capability probe unavailable"}</small></div></div>
     </aside>
 
     <main className="main-content">
