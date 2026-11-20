@@ -131,8 +131,16 @@ class HermesRunsExecutor:
         self.stop(hermes_run_id)
         raise TimeoutError(f"Hermes run did not finish within {self.timeout} seconds")
 
+    def get_capabilities(self) -> dict[str, Any]:
+        """Return Hermes feature flags without exposing API configuration."""
+        raw = self._request("GET", "/v1/capabilities")
+        features = raw.get("features")
+        if not isinstance(features, dict):
+            raise RuntimeError("Hermes capabilities response is invalid")
+        return {"features": {str(name): bool(value) for name, value in features.items()}}
+
     def require_approval_bridge(self) -> None:
-        capabilities = self._request("GET", "/v1/capabilities")
+        capabilities = self.get_capabilities()
         features = capabilities.get("features", {})
         if not features.get("run_approval_response") or not features.get("approval_events"):
             raise RuntimeError("Hermes Runs API does not advertise approval bridge support")
