@@ -239,6 +239,10 @@ details pre { max-height: 220px; overflow: auto; padding: 10px; color: var(--mut
 .model-summary span, .model-summary small { color: var(--muted); font-size: 9px; }
 .model-summary strong { overflow: hidden; color: var(--text); font: 10px "JetBrains Mono", monospace; text-overflow: ellipsis; white-space: nowrap; }
 .model-summary small { margin-left: auto; white-space: nowrap; }
+.evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.evidence-grid > span { display: grid; gap: 3px; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.02); }
+.evidence-grid small { color: var(--faint); font-size: 9px; }
+.evidence-grid strong { overflow: hidden; color: var(--text-2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .run-toolbar { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .run-toolbar .danger-icon { margin-left: auto; }
 .drawer-section { margin-top: 22px; }

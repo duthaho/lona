@@ -21,6 +21,8 @@ test("operator can review attention queue and inspect a run", async ({ page }, t
   await expect(page.getByRole("table")).toBeVisible();
   await page.getByRole("row", { name: /release-briefing/i }).nth(1).click();
   await expect(page.getByRole("heading", { name: "Release briefing" })).toBeVisible();
+  await expect(page.getByText("Execution evidence")).toBeVisible();
+  await expect(page.getByText("Requested model")).toBeVisible();
   await expect(page.getByText("Artifacts", { exact: true })).toBeVisible();
 });
 
