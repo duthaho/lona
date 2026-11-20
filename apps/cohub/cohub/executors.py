@@ -337,13 +337,18 @@ class HermesWorkflowGenerator:
     def stop(self, external_run_id: str) -> dict[str, Any]:
         return self._client.stop(external_run_id)
 
-    def _require_tool_free_profile(self) -> None:
+    def get_safety_status(self) -> dict[str, Any]:
+        """Report only whether the dedicated designer profile is safe to use."""
         catalog = self._request("GET", "/v1/toolsets")
         data = catalog.get("data")
         if not isinstance(data, list):
             raise RuntimeError("Hermes designer tool surface could not be verified")
-        enabled = [item for item in data if isinstance(item, dict) and item.get("enabled")]
-        if enabled:
+        enabled = [str(item.get("name") or item.get("id") or "unknown") for item in data if isinstance(item, dict) and item.get("enabled")]
+        return {"configured": True, "tool_free": not enabled, "enabled_toolsets": enabled}
+
+    def _require_tool_free_profile(self) -> None:
+        status = self.get_safety_status()
+        if not status["tool_free"]:
             raise RuntimeError("Hermes designer profile must have all executable tools disabled")
 
     def submit(

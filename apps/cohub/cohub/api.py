@@ -85,6 +85,7 @@ def create_server(
     api_token: str = "",
     model_catalog: Callable[[bool], dict[str, Any]] | None = None,
     hermes_capabilities: Callable[[], dict[str, Any]] | None = None,
+    designer_status: Callable[[], dict[str, Any]] | None = None,
     workflow_generation: WorkflowGenerationService | None = None,
 ) -> ThreadingHTTPServer:
     root = Path(static_dir).resolve()
@@ -157,6 +158,12 @@ def create_server(
                 if hermes_capabilities is None:
                     raise ApiError(503, "Hermes capability probe is unavailable")
                 self._json(200, hermes_capabilities())
+                return
+            if method == "GET" and path == "/api/hermes/designer-status":
+                if designer_status is None:
+                    self._json(200, {"configured": False, "tool_free": False, "enabled_toolsets": []})
+                else:
+                    self._json(200, designer_status())
                 return
             if method == "GET" and path == "/api/hermes/models":
                 if model_catalog is None:
