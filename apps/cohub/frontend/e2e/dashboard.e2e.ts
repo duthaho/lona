@@ -66,9 +66,11 @@ test("operator can save, reopen, validate, and publish a form-based workflow dra
 
   await expect(page.getByRole("heading", { name: "untitled-workflow" })).toBeVisible();
   await page.getByLabel("Workflow name").fill(workflowName);
+  await page.getByLabel("Workflow recommended model").selectOption({ label: "gpt-5.6" });
   await page.getByLabel("New node ID").fill("draft");
   await page.getByRole("button", { name: "Add node" }).click();
   await page.getByLabel("Prompt").fill("Create a concise verified report.");
+  await page.getByLabel("Task model override").selectOption({ label: "gpt-5.6" });
   const draftNode = page.locator('.react-flow__node[data-id="draft"]');
   await expect(draftNode).toBeVisible();
   const before = await draftNode.boundingBox();

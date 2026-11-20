@@ -19,6 +19,22 @@ class WorkflowEngineTests(unittest.TestCase):
         self.store.publish_workflow(workflow)
         return self.engine.start_run(workflow["name"], {"request": "test"}, title="Test run")
 
+    def test_model_selection_precedence_is_run_then_node_then_workflow(self):
+        workflow = {
+            "name": "model-precedence", "start": "work",
+            "default_model": {"provider": "workflow", "model": "default"},
+            "nodes": {"work": {"type": "task", "model": {"provider": "node", "model": "override"}, "next": "done"}, "done": {"type": "end"}},
+        }
+        self.store.publish_workflow(workflow)
+        run = self.engine.start_run("model-precedence", {})
+        claimed = self.engine.claim_next(run["id"], "worker")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.execution_selection, {"provider": "node", "model": "override"})
+        run_override = self.engine.start_run("model-precedence", {}, requested_provider="run", requested_model="override")
+        claimed_override = self.engine.claim_next(run_override["id"], "worker")
+        self.assertIsNotNone(claimed_override)
+        self.assertEqual(claimed_override.execution_selection, {"provider": "run", "model": "override"})
+
     def test_start_schedules_only_start_node_and_task_completion_advances(self):
         run = self.start({
             "name": "linear", "start": "first",

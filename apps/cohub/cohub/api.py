@@ -392,6 +392,15 @@ def create_server(
                 if published is None:
                     raise ApiError(404, "workflow not found")
                 input_data = validate_run_input(published["definition"], input_data)
+                declared_models = [reference for reference in [published["definition"].get("default_model"), *(node.get("model") for node in published["definition"]["nodes"].values() if node.get("type") == "task")] if isinstance(reference, dict)]
+                if declared_models:
+                    if model_catalog is None:
+                        raise ApiError(400, "workflow model routing is unavailable")
+                    catalog = model_catalog(False)
+                    allowed = {(item.get("provider"), option.get("id")) for item in catalog.get("providers", []) for option in item.get("models", [])}
+                    invalid = next((reference for reference in declared_models if (reference.get("provider"), reference.get("model")) not in allowed), None)
+                    if invalid:
+                        raise ApiError(400, "workflow references a provider/model that is not authenticated in Hermes")
                 run = engine.start_run(
                     workflow_name,
                     input_data,
