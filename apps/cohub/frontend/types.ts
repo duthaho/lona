@@ -36,6 +36,7 @@ export type WorkflowNodeType = "task" | "decision" | "parallel" | "human" | "end
 
 export type WorkflowNode = {
   type: WorkflowNodeType;
+  model?: { provider: string; model: string };
   next?: string;
   routes?: Record<string, string>;
   branches?: string[];
@@ -53,6 +54,7 @@ export type WorkflowDefinition = {
   description?: string;
   start: string;
   defaults?: { max_attempts?: number };
+  default_model?: { provider: string; model: string };
   input_schema?: InputSchema;
   nodes: Record<string, WorkflowNode>;
 };

@@ -102,6 +102,20 @@ class WorkflowSchemaTests(unittest.TestCase):
             validate_workflow(workflow)
 
 
+    def test_accepts_workflow_and_task_model_references(self):
+        workflow = copy.deepcopy(BASE_WORKFLOW)
+        workflow["default_model"] = {"provider": "openai", "model": "workflow-model"}
+        workflow["nodes"]["draft"]["model"] = {"provider": "openai", "model": "node-model"}
+        validated = validate_workflow(workflow)
+        self.assertEqual(validated["default_model"]["model"], "workflow-model")
+        self.assertEqual(validated["nodes"]["draft"]["model"]["model"], "node-model")
+
+    def test_rejects_malformed_model_reference(self):
+        workflow = copy.deepcopy(BASE_WORKFLOW)
+        workflow["default_model"] = {"provider": "openai"}
+        with self.assertRaisesRegex(WorkflowValidationError, "default_model"):
+            validate_workflow(workflow)
+
     def test_validates_declared_workflow_inputs(self):
         workflow = copy.deepcopy(BASE_WORKFLOW)
         workflow["input_schema"] = {

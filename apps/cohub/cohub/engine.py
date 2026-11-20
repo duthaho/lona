@@ -221,22 +221,21 @@ class WorkflowEngine:
             for step in self.store.get_steps(run_id)
             if step["status"] == "completed" and step.get("output") is not None
         }
+        node = workflow["nodes"][step_id]
+        selected = (
+            {"provider": run["requested_provider"], "model": run["requested_model"]}
+            if run.get("requested_provider") and run.get("requested_model")
+            else node.get("model") or workflow.get("default_model") or {}
+        )
         return ClaimedStep(
             run_id=run_id,
             step_id=step_id,
             attempt=attempt,
-            node=workflow["nodes"][step_id],
+            node=node,
             workflow=workflow,
             task_input=run["input"],
             dependency_outputs=completed,
-            execution_selection={
-                key: value
-                for key, value in {
-                    "provider": run.get("requested_provider"),
-                    "model": run.get("requested_model"),
-                }.items()
-                if value
-            },
+            execution_selection={key: value for key, value in selected.items() if value},
             lease_owner=worker_id,
             lease_expires_at=expires,
         )

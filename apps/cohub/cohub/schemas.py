@@ -64,6 +64,18 @@ def _validate_output_schema(schema: Any, location: str) -> None:
         _validate_output_schema(child, f"{location}.{key}")
 
 
+def _validate_model_reference(reference: Any, location: str) -> None:
+    if not isinstance(reference, dict):
+        raise WorkflowValidationError(f"{location} must be an object")
+    unknown = set(reference) - {"provider", "model"}
+    if unknown:
+        raise WorkflowValidationError(f"{location} uses unsupported field: {sorted(unknown)[0]}")
+    for field in ("provider", "model"):
+        value = reference.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise WorkflowValidationError(f"{location}.{field} must be a non-empty string")
+
+
 def validate_workflow(workflow: Any) -> dict[str, Any]:
     """Validate and return a deep normalized copy of a workflow definition."""
 
@@ -91,6 +103,8 @@ def validate_workflow(workflow: Any) -> dict[str, Any]:
         node_type = node.get("type")
         if node_type not in NODE_TYPES:
             raise WorkflowValidationError(f"node {node_id} has unsupported node type: {node_type}")
+        if node_type == "task" and "model" in node:
+            _validate_model_reference(node["model"], f"node {node_id}.model")
         if node_type == "decision" and (not isinstance(node.get("routes"), dict) or not node["routes"]):
             raise WorkflowValidationError(f"decision node {node_id} requires routes")
         if node_type == "parallel" and (not isinstance(node.get("branches"), list) or not node["branches"]):
@@ -120,6 +134,8 @@ def validate_workflow(workflow: Any) -> dict[str, Any]:
         queue.extend(_edges(nodes[node_id]))
     if not any(nodes[node_id]["type"] == "end" for node_id in reachable):
         raise WorkflowValidationError("workflow must contain a reachable end node")
+    if "default_model" in normalized:
+        _validate_model_reference(normalized["default_model"], "default_model")
     if "input_schema" in normalized:
         _validate_input_schema(normalized["input_schema"])
     normalized.setdefault("defaults", {})
