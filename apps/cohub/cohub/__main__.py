@@ -89,6 +89,7 @@ def main() -> None:
         api_token=args.api_token,
         model_catalog=getattr(worker.executor, "get_model_catalog", None),
         hermes_capabilities=getattr(worker.executor, "get_capabilities", None),
+        designer_status=getattr(generation.generator, "get_safety_status", None) if generation else None,
         workflow_generation=generation,
     )
     print(f"Cohub dashboard: http://{args.host}:{server.server_port}")
