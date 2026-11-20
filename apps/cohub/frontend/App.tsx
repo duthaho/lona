@@ -82,6 +82,7 @@ function App() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalog | null>(null);
   const [hermesCapabilities, setHermesCapabilities] = useState<Record<string, boolean> | null>(null);
+  const [designerStatus, setDesignerStatus] = useState<{ configured: boolean; tool_free: boolean; enabled_toolsets: string[] } | null>(null);
   const [analytics, setAnalytics] = useState<Array<{ workflow: string; provider: string; model: string; runs: number; completed: number; failed: number; tokens: number; cost: number; avg_latency_seconds: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [authRequired, setAuthRequired] = useState(false);
@@ -122,6 +123,8 @@ function App() {
       catch { setModelCatalog(null); }
       try { const capabilityResponse = await request<{ features: Record<string, boolean> }>("/api/hermes/capabilities", token); setHermesCapabilities(capabilityResponse.features); }
       catch { setHermesCapabilities(null); }
+      try { setDesignerStatus(await request<{ configured: boolean; tool_free: boolean; enabled_toolsets: string[] }>("/api/hermes/designer-status", token)); }
+      catch { setDesignerStatus(null); }
       setAuthRequired(false); setError("");
     } catch (caught) {
       const apiError = caught as Error & { status?: number };
@@ -216,7 +219,7 @@ function App() {
     <NewRunModal open={modal === "new-run"} workflows={workflows} models={modelCatalog} preferred={selectedWorkflow?.name || ""} token={token} onClose={() => setModal(null)} onCreated={async (run) => { setModal(null); notify("Workflow run started"); await loadData(true); navigate("runs"); await openRun(run); }} />
     <ImportWorkflowModal open={modal === "publish"} token={token} onClose={() => setModal(null)} onImported={(draft) => { setModal(null); setDrafts((current) => [draft, ...current]); setEditingDraft(draft); notify("Workflow JSON imported as a draft"); }} />
     <ApprovalModal approval={selectedApproval} open={modal === "approval"} token={token} onClose={() => { setModal(null); setSelectedApproval(null); }} onResolved={async (decision) => { setModal(null); setSelectedApproval(null); notify(decision === "approve" ? "Approved once" : "Action denied"); await loadData(true); }} />
-    {editingDraft && <WorkflowDraftEditor draft={editingDraft} token={token} models={modelCatalog} onClose={() => setEditingDraft(null)} onSaved={(saved) => { setEditingDraft(saved); setDrafts((current) => current.map((item) => item.id === saved.id ? saved : item)); }} onPublished={async (workflow) => { setEditingDraft(null); setSelectedWorkflow(workflow); notify("Workflow draft published"); await loadData(true); }} />}
+    {editingDraft && <WorkflowDraftEditor draft={editingDraft} token={token} models={modelCatalog} designerStatus={designerStatus} onClose={() => setEditingDraft(null)} onSaved={(saved) => { setEditingDraft(saved); setDrafts((current) => current.map((item) => item.id === saved.id ? saved : item)); }} onPublished={async (workflow) => { setEditingDraft(null); setSelectedWorkflow(workflow); notify("Workflow draft published"); await loadData(true); }} />}
     <div className={`toast ${toast ? "toast-visible" : ""}`} role="status">{toast}</div>
   </div>;
 }
