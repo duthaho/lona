@@ -124,7 +124,12 @@ export type ExternalExecution = {
   last_error?: string;
 };
 
-export type ModelOption = { id: string; featured?: boolean; pricing?: Record<string, number | string> };
+export type ModelOption = {
+  id: string;
+  featured?: boolean;
+  pricing?: Record<string, number | string>;
+  capabilities?: Record<string, boolean | string | number>;
+};
 export type ModelProvider = { provider: string; label: string; models: ModelOption[] };
 export type ModelCatalog = {
   current: { provider: string; model: string };

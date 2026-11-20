@@ -42,7 +42,10 @@ test("workflow workspace exposes versioned graph and run action", async ({ page 
 test("operator can override the Hermes model for a run", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New run", exact: true }).click();
-  await page.getByLabel("Model").selectOption({ label: "gpt-5.6 · Featured" });
+  await page.getByLabel("Find a model").fill("gpt-5.6");
+  await page.getByLabel("Model", { exact: true }).selectOption({ label: "gpt-5.6 · Featured" });
+  await expect(page.getByText("Capabilities: structured_output, tools")).toBeVisible();
+  await expect(page.getByText("Pricing: input $2/M · output $8/M")).toBeVisible();
   await page.getByPlaceholder("What outcome do you want?").fill("Model routed release");
   await page.getByRole("button", { name: /Start run/ }).click();
 
