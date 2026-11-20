@@ -88,6 +88,7 @@ def main() -> None:
         static_dir=static_dir,
         api_token=args.api_token,
         model_catalog=getattr(worker.executor, "get_model_catalog", None),
+        hermes_capabilities=getattr(worker.executor, "get_capabilities", None),
         workflow_generation=generation,
     )
     print(f"Cohub dashboard: http://{args.host}:{server.server_port}")
