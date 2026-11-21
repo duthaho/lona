@@ -17,6 +17,7 @@ Lona is a batteries-included deployment kit for [OpenClaw](https://openclaw.ai) 
 - **Secure defaults** — deny-by-default access control, loopback-only dashboards, auto-generated secrets, secrets never committed
 - **Portable state** — everything lives in `./data/`; back up, migrate, or wipe with a single directory
 - **Deterministic coworker workflows** — Hermes deployments include Cohub for versioned graphs, retries, approvals, artifacts, and restart-safe execution
+- **Portable enterprise agent team** — Hermes seeds an orchestrator, ten role-specific profiles, bundled skills and an independent-review Kanban workflow ([setup and limits](docs/enterprise-team.md))
 
 ## Architecture
 
@@ -81,7 +82,7 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 | `logs` | Follow container logs |
 | `status` | Container status |
 | `config` | Edit the **live** config (`data/<platform>/…`) in `$EDITOR`, apply on save |
-| `sync` | Push the repo **template** (`config/<platform>/…`) into the live config without hand-editing: deep-merges over live runtime keys (Hermes) or regenerates from template + `.env` allowlists (OpenClaw), backs up, then applies (Hermes restart · OpenClaw hot-reload) |
+| `sync` | Push the repo **template** (`config/<platform>/…`) into the live config without hand-editing: Hermes backs up root config/SOUL, deep-merges while retaining live topic routes and reconciles managed profile skills/instructions (requires host PyYAML); OpenClaw regenerates from template + `.env` allowlists. Then applies (Hermes restart · OpenClaw hot-reload) |
 | `update` | Transactional update: back up, pull, recreate, canary, auto-rollback on failure (see [Safe updates](#safe-updates)) |
 | `backup` | Archive runtime state into `./backups/`; Hermes backups also include Cohub |
 | `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |

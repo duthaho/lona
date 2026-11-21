@@ -3,6 +3,8 @@
 
 # Runtime state (config, credentials, sessions, memories)
 data/
+# The profile named "data" is source configuration, not runtime state.
+!config/hermes/profiles/data/
 
 # Backups
 backups/

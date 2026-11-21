@@ -18,6 +18,7 @@ terminal:
 agent:
   max_turns: 100        # cap tool iterations/turn (default 500); saves free quota
   api_max_retries: 1    # fail over fast instead of retrying a flaky primary
+  reasoning_effort: medium
 
 # Hard-stop runaway tool loops (weak models loop more, loops burn quota).
 tool_loop_guardrails:
@@ -45,7 +46,7 @@ auxiliary:
 # Tool groups the model may call (`hermes tools list`). Balanced set: keep
 # terminal (most skills need it), drop browser/desktop/image-video. Applies on /reset.
 platform_toolsets:
-  telegram: [web, vision, file, terminal, skills, memory, session_search, todo, cronjob, clarify, messaging, connections]
+  telegram: [web, vision, file, terminal, skills, memory, session_search, todo, cronjob, clarify, connections, kanban]
   # Stricter, no-shell (breaks terminal-backed skills): [web, vision, file, skills, memory, session_search, todo, clarify, messaging]
 
 # Remember prefs/projects across chats; auto-save (single-owner bot).
@@ -67,6 +68,12 @@ curator:
 provider_routing:
   sort: "throughput"      # free models are $0 either way; pick the fastest host
 
+# Dispatcher runs specialist cards in their own profiles, with reviewer lane.
+kanban:
+  auto_decompose: true
+  orchestrator_profile: default
+  max_in_progress_per_profile: 1
+
 platforms:
   telegram:
     extra:
@@ -81,9 +88,9 @@ command_allowlist:
 streaming:
   enabled: false          # streaming edits increase Telegram API calls; off is more stable
 
-# Multi-profile routing: one bot token, specialists per Telegram topic.
-# Set multiplex_profiles to true once profiles are configured.
-# Then add entries to profile_routes mapping your topic thread IDs:
+# Multi-profile runtime: one gateway serves all local profiles/Kanban assignees.
+# Topic routes are environment-specific; configure them in data/hermes/config.yaml
+# only after creating those topics. No route or bot is created automatically.
 #
 #   profile_routes:
 #     - name: researcher-topic
@@ -99,5 +106,5 @@ streaming:
 #
 # After editing data/hermes/config.yaml, restart: ./deploy.sh hermes restart
 # Then send /new in each topic to initialize the specialist identity.
-multiplex_profiles: false
+multiplex_profiles: true
 profile_routes: []

@@ -13,8 +13,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install YAML support for profile reconciliation tests
+        run: python -m pip install 'PyYAML==6.0.2'
       - name: Run Lona shell tests
         run: bash tests/run.sh
+      - name: Validate enterprise team templates
+        run: |
+          python -m py_compile scripts/hermes_team.py
+          python - <<'PY'
+          import json, pathlib, yaml
+          root = pathlib.Path('config/hermes')
+          roles = json.loads((root/'team/roles.json').read_text())['profiles']
+          assert len(roles) == 10
+          for role in roles:
+              assert yaml.safe_load((root/'profiles'/role/'config.yaml').read_text())['agent']['reasoning_effort']
+          assert yaml.safe_load((root/'config.yaml').read_text())['multiplex_profiles'] is True
+          PY
       - name: Validate shell syntax
         run: bash -n deploy.sh scripts/*.sh tests/*.sh
       - name: Validate Compose model

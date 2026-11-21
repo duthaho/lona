@@ -1,0 +1,28 @@
+name: Security
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-team-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject credentials and symlinks in Hermes team templates
+        run: python3 scripts/audit_team_bundle.py --templates config/hermes
+      - name: Check complete manifest in a clean checkout
+        run: |
+          sandbox="$(mktemp -d)"
+          trap 'rm -rf "$sandbox"' EXIT
+          python3 scripts/hermes_team.py seed --templates config/hermes --home "$sandbox"
+          python3 scripts/hermes_team.py check --templates config/hermes --home "$sandbox"
+      - name: Ensure runtime data is not tracked
+        run: |
+          if [ -n "$(git ls-files -- data/)" ]; then
+            echo 'Runtime data/ must not be committed' >&2
+            exit 1
+          fi
