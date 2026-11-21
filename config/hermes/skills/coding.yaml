@@ -1,0 +1,12 @@
+name: coding
+description: Hermes as control plane for local coding agents + terminal token compression
+plugins:
+  - hermes-code-bridge
+  - rtk-hermes
+notes: |
+  hermes-code-bridge lets Hermes dispatch tasks to Claude Code, Codex, or
+  OpenCode running on your local machine. Configure the bridge endpoint after
+  install: tell your bot "configure code bridge endpoint http://host:port".
+
+  rtk-hermes compresses terminal output 60-90%, significantly extending
+  free-model session length on code-heavy tasks.

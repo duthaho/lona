@@ -3,13 +3,15 @@
 #
 #   ./deploy.sh openclaw            # deploy OpenClaw (default action: up)
 #   ./deploy.sh hermes              # deploy Hermes Agent
-#   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|sync|backup|doctor|cli
+#   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|sync|backup|doctor|cli|skills
 #
 # Examples:
 #   ./deploy.sh openclaw logs
-#   ./deploy.sh openclaw config     # edit config in $EDITOR, then apply
+#   ./deploy.sh openclaw config              # edit config in $EDITOR, validate + apply
 #   ./deploy.sh openclaw cli pairing approve telegram ABC123
 #   ./deploy.sh hermes cli setup
+#   ./deploy.sh hermes skills list           # list available skill bundles
+#   ./deploy.sh hermes skills install <bundle>  # install a bundle
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -270,6 +272,20 @@ doctor_quick() {
   fi
 }
 
+# Install rtk-hermes (token compression) and eagle-eye (skill routing) on
+# first deploy. Non-fatal: warns if the registry is unreachable.
+install_hermes_core_plugins() {
+  [ "$PLATFORM" = hermes ] || return 0
+  local i=0
+  while ! dc exec -T hermes true 2>/dev/null && [ $i -lt 15 ]; do
+    sleep 1; i=$((i + 1))
+  done
+  is_running || return 0
+  say "Installing core plugins (rtk-hermes, eagle-eye)"
+  dc exec -T hermes hermes plugins install rtk-hermes eagle-eye 2>/dev/null \
+    || warn "Core plugin install failed — run: ./deploy.sh hermes cli plugins install rtk-hermes eagle-eye"
+}
+
 # OpenClaw's built-in audit tightens perms + flips risky policies. Non-fatal.
 audit_openclaw() {
   [ "$PLATFORM" = openclaw ] || return 0
@@ -331,6 +347,7 @@ case "$ACTION" in
     if [ "$PLATFORM" = hermes ]; then dc up -d --build; else dc up -d; fi
     propagate_hermes_secrets
     reconcile_hermes_api_key
+    install_hermes_core_plugins
     doctor_quick
     audit_openclaw
     next_steps
@@ -354,6 +371,26 @@ case "$ACTION" in
     esac
     [ -f "$f" ] || seed_config
     "${EDITOR:-nano}" "$f"
+    case "$PLATFORM" in
+      hermes)
+        if command -v python3 >/dev/null 2>&1; then
+          python3 -c "
+try:
+    import yaml; yaml.safe_load(open('$f'))
+except ImportError:
+    pass
+except Exception as e:
+    import sys; print(str(e), file=sys.stderr); raise SystemExit(1)
+" || die "config.yaml has invalid YAML syntax — fix it and re-run 'config'. Container NOT restarted."
+        fi
+        ;;
+      openclaw)
+        if command -v node >/dev/null 2>&1; then
+          npx --yes json5 "$f" >/dev/null 2>&1 \
+            || die "openclaw.json has invalid JSON5 — fix it and re-run 'config'. Container NOT restarted."
+        fi
+        ;;
+    esac
     say "Applying config (restarting $PLATFORM)"
     dc restart
     ;;
@@ -446,6 +483,10 @@ PY
       openclaw) dc run --rm --no-deps --entrypoint node openclaw dist/index.js "$@" ;;
       hermes)   dc run --rm hermes "$@" ;;
     esac
+    ;;
+  skills)
+    [ "$PLATFORM" = hermes ] || die "'skills' is only supported for the hermes platform"
+    exec scripts/skills.sh "$PLATFORM" "$@"
     ;;
   *) usage ;;
 esac
