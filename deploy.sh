@@ -3,7 +3,9 @@
 #
 #   ./deploy.sh openclaw            # deploy OpenClaw (default action: up)
 #   ./deploy.sh hermes              # deploy Hermes Agent
+#   ./deploy.sh multica             # deploy Multica AI Agent Platform
 #   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|sync|backup|doctor|cli|skills
+#                                   # multica also: install-agents|team-setup
 #
 # Examples:
 #   ./deploy.sh openclaw logs
@@ -26,7 +28,7 @@ usage() {
 }
 
 case "$PLATFORM" in
-  openclaw|hermes) ;;
+  openclaw|hermes|multica) ;;
   *) usage ;;
 esac
 
@@ -113,11 +115,22 @@ ensure_env() {
   [ -z "$(env_val HERMES_API_SERVER_KEY)" ]     && set_env_var HERMES_API_SERVER_KEY "$(rand_hex)"
   [ -z "$(env_val COHUB_API_TOKEN)" ]           && set_env_var COHUB_API_TOKEN "$(rand_hex)"
 
-  [ -n "$(env_val OPENROUTER_API_KEY)" ] || die "OPENROUTER_API_KEY is empty — edit .env and re-run."
+  [ "$PLATFORM" = multica ] || [ -n "$(env_val OPENROUTER_API_KEY)" ] \
+    || die "OPENROUTER_API_KEY is empty — edit .env and re-run."
+
+  if [ "$PLATFORM" = multica ]; then
+    [ -z "$(env_val MULTICA_JWT_SECRET)" ]        && set_env_var MULTICA_JWT_SECRET        "$(rand_hex)"
+    [ -z "$(env_val MULTICA_POSTGRES_PASSWORD)" ] && set_env_var MULTICA_POSTGRES_PASSWORD "$(rand_hex)"
+    [ -z "$(env_val MULTICA_VCS_SECRET_KEY)" ]    && set_env_var MULTICA_VCS_SECRET_KEY    "$(rand_hex)"
+  fi
+  :
 }
 
 seed_config() {
   case "$PLATFORM" in
+    multica)
+      mkdir -p data/multica
+      ;;
     openclaw)
       mkdir -p data/openclaw
       if [ ! -f data/openclaw/openclaw.json ]; then
@@ -248,10 +261,17 @@ sync_openclaw_users() {
 
 dc() { docker compose --profile "$PLATFORM" "$@"; }
 
-is_running() { [ "$(docker inspect -f '{{.State.Running}}' "lona-$PLATFORM" 2>/dev/null)" = "true" ]; }
+_running_container() {
+  case "$PLATFORM" in
+    multica) echo "lona-multica-backend" ;;
+    *)       echo "lona-$PLATFORM" ;;
+  esac
+}
+is_running() { [ "$(docker inspect -f '{{.State.Running}}' "$(_running_container)" 2>/dev/null)" = "true" ]; }
 
 # Model-chain listing check (free ids rotate); warns, never blocks the deploy.
 doctor_quick() {
+  [ "$PLATFORM" = multica ] && return 0
   if ! scripts/doctor.sh "$PLATFORM" --quick; then
     warn "Model chain degraded — run: ./deploy.sh $PLATFORM doctor"
   fi
@@ -303,6 +323,23 @@ next_steps() {
   echo
   say "Done. $PLATFORM is running."
   case "$PLATFORM" in
+    multica)
+      _mfe="$(env_val MULTICA_FRONTEND_PORT)"; _mfe="${_mfe:-3000}"
+      _mbe="$(env_val MULTICA_BACKEND_PORT)";  _mbe="${_mbe:-8083}"
+      echo "  • Status:    ./deploy.sh multica status"
+      echo "  • Logs:      ./deploy.sh multica logs"
+      echo "  • Frontend:  ssh -L ${_mfe}:127.0.0.1:${_mfe} <user>@<vps>  →  http://127.0.0.1:${_mfe}"
+      echo "  • Backend:   ssh -L ${_mbe}:127.0.0.1:${_mbe} <user>@<vps>  →  http://127.0.0.1:${_mbe}"
+      echo
+      echo "  First login (no email configured):"
+      echo "    ./deploy.sh multica logs | grep -i 'verification code'"
+      echo
+      echo "  Install coding agent CLIs on this machine:"
+      echo "    ./deploy.sh multica install-agents"
+      echo
+      echo "  Seed the enterprise agent team (run after creating your account + workspace):"
+      echo "    ./deploy.sh multica team-setup"
+      ;;
     openclaw)
       echo "  • Status:    ./deploy.sh openclaw status"
       echo "  • Logs:      ./deploy.sh openclaw logs"
@@ -346,10 +383,16 @@ case "$ACTION" in
       sync_openclaw_groups
     fi
     say "Pulling image + starting $PLATFORM"
-    # Pull only the gateway image; Cohub is build-only (no image to pull) and
-    # is (re)built by the --build flag below on the hermes profile.
-    dc pull "$PLATFORM"
-    if [ "$PLATFORM" = hermes ]; then dc up -d --build; else dc up -d; fi
+    if [ "$PLATFORM" = multica ]; then
+      dc pull multica-postgres multica-backend multica-frontend
+      dc up -d
+    elif [ "$PLATFORM" = hermes ]; then
+      dc pull "$PLATFORM"
+      dc up -d --build
+    else
+      dc pull "$PLATFORM"
+      dc up -d
+    fi
     propagate_hermes_secrets
     reconcile_hermes_api_key
     install_hermes_core_plugins
@@ -368,6 +411,7 @@ case "$ACTION" in
     exec scripts/selfupdate.sh "$PLATFORM" "$@"
     ;;
   doctor)
+    [ "$PLATFORM" = multica ] && { say "No doctor available for multica — check: ./deploy.sh multica logs"; exit 0; }
     exec scripts/doctor.sh "$PLATFORM" "$@"
     ;;
   config)
@@ -509,6 +553,14 @@ PY
   skills)
     [ "$PLATFORM" = hermes ] || die "'skills' is only supported for the hermes platform"
     exec scripts/skills.sh "$PLATFORM" "$@"
+    ;;
+  install-agents)
+    [ "$PLATFORM" = multica ] || die "'install-agents' is only supported for the multica platform"
+    exec scripts/install-coding-agents.sh
+    ;;
+  team-setup)
+    [ "$PLATFORM" = multica ] || die "'team-setup' is only supported for the multica platform"
+    exec config/multica/seed-team.sh
     ;;
   *) usage ;;
 esac
