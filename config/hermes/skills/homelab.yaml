@@ -2,8 +2,8 @@ name: homelab
 description: Home Assistant device control + Nextcloud (files, calendar, contacts)
 plugins:
   - homeassistant
-  - hermes-nextcloud
+  - nextcloud-talk-platform
 notes: |
   After install, configure each plugin by telling your bot:
   - "Configure Home Assistant at http://ha.local:8123 with token <long-lived token>"
-  - "Configure Nextcloud at https://nc.example.com with username <user> and app password <pass>"
+  - "Configure Nextcloud Talk at https://nc.example.com with username <user> and app password <pass>"

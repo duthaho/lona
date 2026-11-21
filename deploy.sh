@@ -272,8 +272,8 @@ doctor_quick() {
   fi
 }
 
-# Install rtk-hermes (token compression) and eagle-eye (skill routing) on
-# first deploy. Non-fatal: warns if the registry is unreachable.
+# Install rtk-rewrite (token compression) and jev-skill-router (skill routing)
+# on first deploy. Non-fatal: warns if the registry is unreachable.
 install_hermes_core_plugins() {
   [ "$PLATFORM" = hermes ] || return 0
   local i=0
@@ -281,9 +281,11 @@ install_hermes_core_plugins() {
     sleep 1; i=$((i + 1))
   done
   is_running || return 0
-  say "Installing core plugins (rtk-hermes, eagle-eye)"
-  dc exec -T hermes hermes plugins install rtk-hermes eagle-eye 2>/dev/null \
-    || warn "Core plugin install failed — run: ./deploy.sh hermes cli plugins install rtk-hermes eagle-eye"
+  say "Installing core plugins (rtk-rewrite, jev-skill-router)"
+  for plugin in rtk-rewrite jev-skill-router; do
+    dc exec -T hermes hermes plugins install "$plugin" 2>/dev/null \
+      || warn "Could not install $plugin — run: ./deploy.sh hermes cli plugins install $plugin"
+  done
 }
 
 # OpenClaw's built-in audit tightens perms + flips risky policies. Non-fatal.
