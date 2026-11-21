@@ -24,6 +24,17 @@ if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
   fi
 fi
 
+if [ "$PLATFORM" = hermes ] && ! command -v python3 >/dev/null 2>&1; then
+  say "Installing Python 3 for portable Hermes profile seeding"
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -y && sudo apt-get install -y python3
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y python3
+  else
+    echo "Install Python 3 manually, then re-run." >&2; exit 1
+  fi
+fi
+
 if [ -d "$DEST/.git" ]; then
   say "Updating existing checkout at $DEST"
   git -C "$DEST" pull --ff-only

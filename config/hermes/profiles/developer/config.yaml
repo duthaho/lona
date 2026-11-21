@@ -1,43 +1,65 @@
+# Lona enterprise team profile. Model defaults to the free Lona chain; auth is never copied.
 model:
   provider: openrouter
   default: nvidia/nemotron-3-ultra-550b-a55b:free
-
 fallback_model:
   provider: openrouter
   model: nvidia/nemotron-3.5-super-vl:free
-
 agent:
   max_turns: 100
   api_max_retries: 1
-
+  reasoning_effort: medium
 tool_loop_guardrails:
   warnings_enabled: true
   hard_stop_enabled: true
-
 compression:
   proactive_prune_tokens: 48000
   idle_compact_after_seconds: 1800
   protect_first_n: 0
-
 auxiliary:
   free_only: true
   openrouter_model: nvidia/nemotron-3.5-lightning:free
   compression:
     max_concurrency: 2
-    reasoning_effort: "low"
+    reasoning_effort: low
   title_generation:
     max_concurrency: 2
   session_search:
     max_concurrency: 2
-
 memory:
   memory_enabled: true
   user_profile_enabled: true
   write_approval: false
-
 provider_routing:
-  sort: "throughput"
-
-# Dev-focused toolset: terminal + web + GitHub skills + cron.
+  sort: throughput
+approvals:
+  mode: smart
+security:
+  redact_secrets: true
+skills:
+  auto_load:
+  - test-driven-development
+  - enterprise-delivery-team
 platform_toolsets:
-  telegram: [terminal, web, vision, file, memory, session_search, skills, clarify, messaging, cronjob, todo]
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - file
+  - memory
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - vision
+  - web
+  telegram:
+  - clarify
+  - file
+  - memory
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - vision
+  - web

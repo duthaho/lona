@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "profiles": {
+    "product": {"skills": ["enterprise-delivery-team", "grounded-citations", "document-to-action-items", "meeting-action-items"]},
+    "researcher": {"skills": ["enterprise-delivery-team", "grounded-citations", "blocked-page-recovery", "arxiv"]},
+    "architect": {"skills": ["enterprise-delivery-team"]},
+    "developer": {"skills": ["enterprise-delivery-team", "test-driven-development", "systematic-debugging", "github-pr-workflow", "github-code-review"]},
+    "frontend": {"skills": ["enterprise-delivery-team", "test-driven-development", "dogfood", "systematic-debugging"]},
+    "data": {"skills": ["enterprise-delivery-team", "test-driven-development", "systematic-debugging", "xlsx"]},
+    "qa": {"skills": ["enterprise-delivery-team", "test-driven-development", "dogfood", "systematic-debugging", "requesting-code-review"]},
+    "security": {"skills": ["enterprise-delivery-team", "github-actions-trust-boundaries", "credential-persistence", "github-code-review", "systematic-debugging"]},
+    "sre": {"skills": ["enterprise-delivery-team", "github-actions-trust-boundaries", "credential-persistence", "github-pr-workflow"]},
+    "reviewer": {"skills": ["enterprise-delivery-team", "sdlc-review", "github-code-review", "requesting-code-review", "test-driven-development"]}
+  }
+}

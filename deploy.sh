@@ -116,22 +116,6 @@ ensure_env() {
   [ -n "$(env_val OPENROUTER_API_KEY)" ] || die "OPENROUTER_API_KEY is empty — edit .env and re-run."
 }
 
-seed_hermes_profiles() {
-  [ -d config/hermes/profiles ] || return 0
-  for profile_src in config/hermes/profiles/*/; do
-    [ -d "$profile_src" ] || continue
-    profile_name="$(basename "$profile_src")"
-    profile_dst="data/hermes/profiles/$profile_name"
-    if [ ! -d "$profile_dst" ]; then
-      say "Seeding specialist profile: $profile_name"
-      mkdir -p "$profile_dst"
-      for f in SOUL.md config.yaml; do
-        [ -f "${profile_src}${f}" ] && cp "${profile_src}${f}" "${profile_dst}/${f}"
-      done
-    fi
-  done
-}
-
 seed_config() {
   case "$PLATFORM" in
     openclaw)
@@ -142,6 +126,7 @@ seed_config() {
       fi
       ;;
     hermes)
+      command -v python3 >/dev/null 2>&1 || die "Hermes team seeding requires Python 3 on the host (no PyYAML needed for up)."
       mkdir -p data/hermes data/cohub
       if [ ! -f data/hermes/config.yaml ]; then
         say "Seeding data/hermes/config.yaml"
@@ -151,7 +136,7 @@ seed_config() {
         say "Seeding data/hermes/SOUL.md"
         cp config/hermes/SOUL.md data/hermes/SOUL.md
       fi
-      seed_hermes_profiles
+      python3 scripts/hermes_team.py seed --templates config/hermes --home data/hermes
       set_env_var HERMES_UID "$(id -u)"
       set_env_var HERMES_GID "$(id -g)"
       ;;
@@ -289,6 +274,23 @@ install_hermes_core_plugins() {
   done
 }
 
+# Kanban databases are runtime state, never committed. Recreate the empty
+# enterprise board on each new volume, without changing the current board.
+ensure_hermes_team_board() {
+  [ "$PLATFORM" = hermes ] || return 0
+  is_running || { warn "Hermes not running — enterprise-apps board not created yet"; return 0; }
+  local boards
+  boards="$(dc exec -T hermes hermes kanban boards list --json 2>/dev/null)" \
+    || { warn "Cannot list Kanban boards — check Hermes image compatibility"; return 0; }
+  if printf '%s' "$boards" | python3 -c \
+    'import json,sys; sys.exit(0 if any(b.get("slug") == "enterprise-apps" for b in json.load(sys.stdin)) else 1)' \
+    2>/dev/null; then return 0; fi
+  dc exec -T hermes hermes kanban boards create enterprise-apps \
+    --name "Enterprise Applications" \
+    --description "Product, architecture, implementation, data, QA, security, SRE and independent review" \
+    || warn "Could not create enterprise-apps board — retry after Hermes is healthy"
+}
+
 # OpenClaw's built-in audit tightens perms + flips risky policies. Non-fatal.
 audit_openclaw() {
   [ "$PLATFORM" = openclaw ] || return 0
@@ -351,6 +353,7 @@ case "$ACTION" in
     propagate_hermes_secrets
     reconcile_hermes_api_key
     install_hermes_core_plugins
+    ensure_hermes_team_board
     doctor_quick
     audit_openclaw
     next_steps
@@ -427,7 +430,16 @@ def merge(base, over):
             base[k] = v
     return base
 live_only = sorted(set(live) - set(tmpl))
+route_snapshot = {
+    'profile_routes': live.get('profile_routes'),
+    'gateway_routes': (live.get('gateway') or {}).get('profile_routes'),
+}
 merge(live, tmpl)
+# Preserve live Telegram topic ownership; checked-in routes are empty by design.
+if route_snapshot['profile_routes']:
+    live['profile_routes'] = route_snapshot['profile_routes']
+if route_snapshot['gateway_routes']:
+    live.setdefault('gateway', {})['profile_routes'] = route_snapshot['gateway_routes']
 tmp = os.environ['LIVE'] + '.tmp'
 with open(tmp, 'w') as fh:
     yaml.safe_dump(live, fh, sort_keys=False, allow_unicode=True)
@@ -435,11 +447,18 @@ os.replace(tmp, os.environ['LIVE'])
 print('   template keys applied:', ', '.join(sorted(tmpl)))
 print('   live-only keys preserved:', ', '.join(live_only) or '(none)')
 PY
-        seed_hermes_profiles
+        if [ -f config/hermes/SOUL.md ] && ! cmp -s config/hermes/SOUL.md data/hermes/SOUL.md; then
+          [ ! -f data/hermes/SOUL.md ] || cp data/hermes/SOUL.md "backups/hermes-SOUL-$ts.md"
+          cp config/hermes/SOUL.md data/hermes/SOUL.md
+          say "Applied orchestrator SOUL (prior copy in backups/ if it existed)"
+        fi
+        python3 scripts/hermes_team.py sync --templates config/hermes --home data/hermes \
+          || die "Enterprise team sync failed — inspect team assets before restarting."
         propagate_hermes_secrets
         if is_running; then
           say "Applying merged config (restarting hermes)"
           dc restart
+          ensure_hermes_team_board
           say "Sync complete. Session-scoped settings (toolsets) apply on the next /reset."
         else
           warn "hermes container not running — config staged. Start it with: ./deploy.sh hermes up"
