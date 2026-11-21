@@ -1,0 +1,12 @@
+name: coding
+description: Hermes as control plane for local coding agents + terminal token compression
+plugins:
+  - cursor-acp
+  - rtk-rewrite
+notes: |
+  cursor-acp lets Hermes dispatch tasks to Cursor's coding agent via the ACP
+  server. Configure after install: run `npx hermes-cursor-acp` once to set up
+  the Cursor workspace, then tell your bot "configure cursor acp".
+
+  rtk-rewrite compresses terminal output 60-90%, significantly extending
+  free-model session length on code-heavy tasks.
