@@ -283,8 +283,9 @@ install_hermes_core_plugins() {
   is_running || return 0
   say "Installing core plugins (rtk-rewrite, jev-skill-router)"
   for plugin in rtk-rewrite jev-skill-router; do
-    dc exec -T hermes hermes plugins install "$plugin" 2>/dev/null \
-      || warn "Could not install $plugin — run: ./deploy.sh hermes cli plugins install $plugin"
+    out="$(dc exec -T hermes hermes plugins install "$plugin" 2>&1)" && continue
+    echo "$out" | grep -q "already exists" && continue
+    warn "Could not install $plugin — run: ./deploy.sh hermes cli plugins install $plugin"
   done
 }
 
