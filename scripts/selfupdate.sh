@@ -46,7 +46,10 @@ env_val() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2- || true; }
 
 short() { local s="${1#sha256:}"; printf '%s' "${s:0:12}"; }
 
-dc() { docker compose --profile "$PLATFORM" "$@"; }
+dc() {
+  if [ "$PLATFORM" = hermes ]; then docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile "$PLATFORM" "$@";
+  else docker compose --profile "$PLATFORM" "$@"; fi
+}
 
 # Resolve the image reference exactly as compose does: shell env → .env →
 # the compose default. Rollback retags the saved old image id onto this ref.

@@ -3,7 +3,7 @@
 source "$(dirname "$0")/helpers.sh"
 sandbox_setup
 trap 'sandbox_teardown' EXIT
-cp "$REPO_ROOT/docker-compose.yml" "$SANDBOX/"
+cp "$REPO_ROOT/docker-compose.hermes.yml" "$SANDBOX/"
 cp "$REPO_ROOT/.env.example" "$SANDBOX/.env.example"
 cp "$REPO_ROOT/README.md" "$SANDBOX/README.md"
 mkdir -p "$SANDBOX/apps"
@@ -11,12 +11,12 @@ cp -r "$REPO_ROOT/apps/cohub" "$SANDBOX/apps/cohub"
 cd "$SANDBOX"
 
 [ -f apps/cohub/Dockerfile ] || fail "(Cohub Dockerfile exists)"
-grep -q '^  cohub:' docker-compose.yml || fail "(Compose defines Cohub service)"
-grep -q 'apps/cohub' docker-compose.yml || fail "(Compose builds Cohub from apps/cohub)"
-grep -q 'http://hermes:8642' docker-compose.yml || fail "(Cohub uses internal Hermes Runs API)"
-grep -q 'HERMES_DESIGNER_API_BASE' docker-compose.yml || fail "(Compose supports a dedicated tool-free Hermes designer profile)"
+grep -q '^  cohub:' docker-compose.hermes.yml || fail "(Compose defines Cohub service)"
+grep -q 'apps/cohub' docker-compose.hermes.yml || fail "(Compose builds Cohub from apps/cohub)"
+grep -q 'http://hermes:8642' docker-compose.hermes.yml || fail "(Cohub uses internal Hermes Runs API)"
+grep -q 'HERMES_DESIGNER_API_BASE' docker-compose.hermes.yml || fail "(Compose supports a dedicated tool-free Hermes designer profile)"
 grep -q 'HERMES_DESIGNER_API_BASE' .env.example || fail "(.env.example documents the Hermes designer endpoint)"
-grep -q 'data/cohub' docker-compose.yml || fail "(Compose persists Cohub data)"
+grep -q 'data/cohub' docker-compose.hermes.yml || fail "(Compose persists Cohub data)"
 grep -q 'COHUB_API_TOKEN' .env.example || fail "(.env.example documents Cohub API token)"
 grep -q 'HERMES_API_SERVER_KEY' .env.example || fail "(.env.example documents Hermes API server key)"
 
