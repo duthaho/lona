@@ -13,7 +13,7 @@ Cohub, a local workflow dashboard and control plane.
 - Deploy and operate OpenClaw, Hermes, or the optional Multica agent platform
   through one entry point: `deploy.sh`.
 - Run Telegram bots with allowlists and loopback-only dashboards by default.
-- Use OpenRouter, including its free-model route, or follow the subscription
+- Use OpenRouter's free-model chain by default, or follow the subscription
   provider guidance in [docs/subscriptions.md](docs/subscriptions.md).
 - Run Hermes with Cohub for deterministic workflows, approvals, artifacts, and
   restart-safe execution.
@@ -70,6 +70,15 @@ The first `up` run creates `.env` from `.env.example`, generates the secrets it
 owns, seeds runtime configuration below `data/`, pulls images, and starts the
 selected profile. Message the configured Telegram bot after startup.
 
+For OpenClaw, run `cp .env.example .env` and set `TELEGRAM_ALLOWED_USERS` to
+your numeric Telegram user ID before the first `up` to use an explicit
+allowlist. Without it, OpenClaw uses Telegram pairing: send the bot a message,
+then approve the returned code:
+
+```bash
+./deploy.sh openclaw cli pairing approve telegram <CODE>
+```
+
 ## Configuration
 
 Keep `.env` private and out of version control. The deployment reads names from
@@ -111,6 +120,9 @@ OpenClaw and Hermes additionally support `sync`, `backup`, `doctor`, `update`,
 and `cli`; Hermes also supports `skills`. Multica supports `install-agents` and
 `team-setup`, but its `backup`, `doctor`, `cli`, and generic `sync` commands are
 intentionally unsupported.
+
+For OpenClaw and Hermes, `sync` applies the checked-in `config/<platform>/`
+templates to the live runtime configuration.
 
 For OpenClaw and Hermes, schedule or remove scheduled health checks with
 `doctor install` and `doctor uninstall`. The doctor reads
