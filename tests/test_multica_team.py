@@ -207,6 +207,13 @@ class TeamContractTests(unittest.TestCase):
     def writes(self):
         return [r for r in self.fixture.requests if r[0] != 'GET']
 
+    def module(self):
+        spec = importlib.util.spec_from_file_location('multica_team_test_module', self.home / 'scripts/multica_team.py')
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
     def test_fresh_setup_persists_squad_policy_then_rerun_has_no_writes(self):
         first = self.run_seed()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
@@ -279,6 +286,81 @@ class TeamContractTests(unittest.TestCase):
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(self.writes(), [])
         self.assertIn('Would ensure workflow Lona Delivery', dry.stdout)
+
+    def test_dry_run_reads_all_schema_v2_dependencies(self):
+        result = self.run_seed('--dry-run')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        reads = {path for method, path, _, _ in self.fixture.requests if method == 'GET'}
+        self.assertTrue({'/api/agents', '/api/squads', '/api/skills', '/api/runtimes',
+                         '/api/issue-statuses', '/api/issue-workflows', '/api/projects',
+                         '/api/users', '/api/me'} <= reads)
+        self.assertEqual(self.writes(), [])
+
+    def test_v2_validation_rejects_unknown_status(self):
+        team = json.loads((self.home / 'config/multica/team.json').read_text())
+        team['workflow']['steps'][0]['status_key'] = 'not-a-status'
+        module = self.module()
+        with self.assertRaisesRegex(module.SetupError, 'unknown status'):
+            module.validate_team(team)
+
+    def test_v2_validation_rejects_unknown_handler(self):
+        team = json.loads((self.home / 'config/multica/team.json').read_text())
+        team['workflow']['steps'][1]['handler'] = {'type': 'agent', 'name': 'Unknown'}
+        module = self.module()
+        with self.assertRaisesRegex(module.SetupError, 'unknown agent'):
+            module.validate_team(team)
+
+    def test_v2_validation_rejects_project_workflow_mismatch(self):
+        team = json.loads((self.home / 'config/multica/team.json').read_text())
+        team['project']['workflow'] = 'Other workflow'
+        module = self.module()
+        with self.assertRaisesRegex(module.SetupError, 'Project workflow'):
+            module.validate_team(team)
+
+    def test_reviewer_email_rejects_zero_matching_members(self):
+        self.fixture.users = []
+        result = self.run_seed('--sync', MULTICA_REVIEWER_EMAIL='missing@example.test')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('did not resolve', result.stderr)
+
+    def test_reviewer_email_rejects_ambiguous_members(self):
+        self.fixture.users.append({'id': 'member-duplicate', 'email': 'owner@example.test'})
+        result = self.run_seed('--sync', MULTICA_REVIEWER_EMAIL='owner@example.test')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('did not resolve', result.stderr)
+
+    def test_schema_v2_second_run_has_no_status_workflow_or_project_writes(self):
+        self.assertEqual(self.run_seed().returncode, 0)
+        self.fixture.requests.clear()
+        self.assertEqual(self.run_seed().returncode, 0)
+        paths = [path for method, path, _, _ in self.writes()]
+        self.assertFalse(any(path.startswith('/api/issue-statuses') or path.startswith('/api/issue-workflows')
+                             or path.startswith('/api/projects') for path in paths))
+
+    def test_sync_updates_workflow_and_project(self):
+        self.assertEqual(self.run_seed().returncode, 0)
+        path = self.home / 'config/multica/team.json'
+        team = json.loads(path.read_text())
+        team['workflow']['description'] += ' revised'
+        team['workflow']['steps'][1]['instructions'] += ' revised'
+        team['project']['description'] += ' revised'
+        path.write_text(json.dumps(team))
+        result = self.run_seed('--sync')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        workflow = next(iter(self.fixture.workflows.values()))
+        project = next(iter(self.fixture.projects.values()))
+        self.assertEqual(workflow['description'], team['workflow']['description'])
+        self.assertEqual(project['description'], team['project']['description'])
+
+    def test_safe_export_rejects_email(self):
+        module = self.module()
+        with self.assertRaisesRegex(module.SetupError, 'Refusing export'):
+            module.safe_export({'instructions': 'contact reviewer@example.test'})
+
+    def test_safe_export_rejects_identity_field(self):
+        module = self.module()
+        with self.assertRaisesRegex(module.SetupError, 'Refusing export'):
+            module.safe_export({'workspace_id': 'ws-1'})
 
     def test_missing_online_runtime_is_rejected_before_any_write(self):
         self.fixture.runtimes[1]['status'] = 'offline'
