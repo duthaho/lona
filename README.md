@@ -15,7 +15,7 @@ Lona is a batteries-included deployment kit for [OpenClaw](https://openclaw.ai) 
 - **Subscription-powered coding** — use your existing ChatGPT Plus/Pro or Claude Pro/Max plan as the assistant's brain, no API billing
 - **Telegram-native** — DMs, groups, and forum topics (each topic is an isolated session); long-polling means no inbound ports and works behind NAT
 - **Secure defaults** — deny-by-default access control, loopback-only dashboards, auto-generated secrets, secrets never committed
-- **Portable state** — everything lives in `./data/`; back up, migrate, or wipe with a single directory
+- **Portable gateway state** — OpenClaw/Hermes state lives in `./data/`; Multica uses separate Docker volumes and needs its own recovery plan
 - **Deterministic coworker workflows** — Hermes deployments include Cohub for versioned graphs, retries, approvals, artifacts, and restart-safe execution
 - **Portable enterprise agent team** — Hermes seeds an orchestrator, ten role-specific profiles, bundled skills and an independent-review Kanban workflow ([setup and limits](docs/enterprise-team.md))
 
@@ -88,6 +88,37 @@ First run prompts for your OpenRouter key and Telegram token, generates auth sec
 | `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |
 | `cli …` | Run the platform's own CLI inside the container |
 
+## Multica agent teams (opt-in)
+
+Multica is a separate web/control-plane deployment with a seven-agent Build Team.
+It does not share the gateway platforms' free-model, state-directory, Telegram
+access-control or transactional-update guarantees.
+
+```bash
+./deploy.sh multica up                 # generates secrets and starts the web stack
+./deploy.sh multica install-agents     # installs CLIs; authentication is separate
+# Create your account/workspace, authenticate coding tools and connect a daemon.
+# Export MULTICA_API_TOKEN or enter it via the hidden interactive prompt.
+./deploy.sh multica team-setup --workspace-id <workspace-uuid>
+./deploy.sh multica team-setup --workspace-id <workspace-uuid> --sync
+```
+
+See [deployment commands and recovery limitations](config/multica/DEPLOYMENT.md)
+and [team policy, safe reconciliation and primary-source rationale](docs/multica-team.md).
+Team setup preserves customized instructions/runtime/model/auth by default,
+resolves workspace/runtime ambiguity explicitly, and fails on provisioning or
+readback errors. Squad-leader turns coordinate rather than implement/review;
+non-author reviewers, exact-head checks and bounded correction cycles govern
+handoff. Prompt rules are not authorization or spend controls.
+
+**Limits:** Multica persists database/uploads in Docker volumes, not `./data`.
+Its `backup`, `doctor`, `cli` proxy and generic `sync` are unsupported and fail
+explicitly. `update` is nontransactional, without automatic backup/rollback;
+`config` edits `.env`, then `up` applies it. Establish tested recovery and review
+upstream migrations before using it for valuable data. Autopilots are suggestions
+only, not provisioned by team setup. No provider execution or live deployment is
+proved by template validation.
+
 ## Cohub personal coworker
 
 `./deploy.sh hermes` starts Cohub alongside Hermes. Cohub owns deterministic workflow routing, retries, leases, payload-bound human approvals, artifacts, and append-only run traces; Hermes continues to own reasoning, tools, skills, memory, browser automation, models, and messaging. Hermes tool approvals are bridged into Cohub as durable, one-shot review records and resume the same Hermes run after a decision.
@@ -154,6 +185,8 @@ To use the bot in a group: disable privacy mode in @BotFather (`/setprivacy`) or
 
 ## Safe updates
 
+This section applies to **OpenClaw and Hermes only**, not Multica.
+
 Staying current is the security baseline (the 2026 OpenClaw pairing CVE only
 reached boxes that pulled) — but a blind `pull && recreate` can swap in a
 broken image and leave your assistant down. `update` is **transactional**: it
@@ -207,7 +240,9 @@ in `.env`.
 
 ```
 deploy.sh                      One-command deploy and management
-docker-compose.yml             Both platforms as Compose profiles
+docker-compose.yml             OpenClaw profile and common bridge settings
+docker-compose.hermes.yml      Hermes + Cohub overlay (selected by deploy.sh)
+docker-compose.multica.yml     Independent Multica web/backend/database model
 .env.example                   Single configuration template
 config/
   openclaw/openclaw.json       OpenClaw template (seeded to data/ on first run)

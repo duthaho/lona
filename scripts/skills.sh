@@ -28,7 +28,7 @@ say()  { printf '\033[1;36m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
-dc() { docker compose --profile "$PLATFORM" "$@"; }
+dc() { docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile "$PLATFORM" "$@"; }
 
 is_running() { [ "$(docker inspect -f '{{.State.Running}}' "lona-$PLATFORM" 2>/dev/null)" = "true" ]; }
 

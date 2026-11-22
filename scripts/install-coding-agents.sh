@@ -87,6 +87,9 @@ done
 
 echo
 say "Next: connect this machine as a runtime"
+echo "  Installation does not authenticate providers or prove runtime availability."
+echo "  The following interactive setup changes CLI connection/auth configuration and starts a daemon."
+echo "  Run it only after reviewing the target and your existing credentials."
 # Read ports from lona .env if present (overrides env vars)
 _lona_env="$(cd "$(dirname "$0")/.." && pwd)/.env"
 _env_val() { grep -E "^$1=" "$_lona_env" 2>/dev/null | head -1 | cut -d= -f2- || true; }
@@ -98,5 +101,8 @@ echo "    --app-url    http://127.0.0.1:${FRONTEND_PORT}"
 echo
 echo "  Then: multica daemon status"
 
-[ "$any_missing" = "0" ] || echo
-[ "$any_missing" = "0" ] || warn "Some CLIs are missing — agents using those providers won't execute tasks."
+if [ "$any_missing" != "0" ]; then
+  echo
+  warn "Some CLIs are missing — agents using those providers won't execute tasks."
+  exit 1
+fi

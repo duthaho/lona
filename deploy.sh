@@ -44,6 +44,25 @@ rand_hex() {
   fi
 }
 
+validate_multica_key() {
+  local key="${MULTICA_VCS_SECRET_KEY-$(env_val MULTICA_VCS_SECRET_KEY)}"
+  command -v python3 >/dev/null 2>&1 || die "Multica key validation requires python3."
+  printf '%s' "$key" | python3 -c 'import base64,sys
+try:
+    value = sys.stdin.buffer.read()
+    raw = base64.b64decode(value, validate=True)
+    assert len(raw) == 32 and base64.b64encode(raw) == value
+except Exception:
+    sys.exit(1)' || die "MULTICA_VCS_SECRET_KEY must be canonical base64 of 32 bytes; existing key was not rotated."
+}
+
+validate_multica_postgres_password() {
+  local password="${MULTICA_POSTGRES_PASSWORD-$(env_val MULTICA_POSTGRES_PASSWORD)}"
+  case "$password" in
+    ''|*[!a-zA-Z0-9._~-]*) die "MULTICA_POSTGRES_PASSWORD must use only ASCII letters, digits, . _ ~ -; existing password was not changed." ;;
+  esac
+}
+
 set_env_var() {
   local key="$1" val="$2"
   if grep -q "^${key}=" .env; then
@@ -119,9 +138,43 @@ ensure_env() {
     || die "OPENROUTER_API_KEY is empty — edit .env and re-run."
 
   if [ "$PLATFORM" = multica ]; then
-    [ -z "$(env_val MULTICA_JWT_SECRET)" ]        && set_env_var MULTICA_JWT_SECRET        "$(rand_hex)"
-    [ -z "$(env_val MULTICA_POSTGRES_PASSWORD)" ] && set_env_var MULTICA_POSTGRES_PASSWORD "$(rand_hex)"
-    [ -z "$(env_val MULTICA_VCS_SECRET_KEY)" ]    && set_env_var MULTICA_VCS_SECRET_KEY    "$(rand_hex)"
+    if [ "${MULTICA_VCS_SECRET_KEY+x}" = x ] || [ -n "$(env_val MULTICA_VCS_SECRET_KEY)" ]; then
+      validate_multica_key
+      if [ "${MULTICA_VCS_SECRET_KEY+x}" = x ]; then
+        if [ -z "$(env_val MULTICA_VCS_SECRET_KEY)" ]; then
+          set_env_var MULTICA_VCS_SECRET_KEY "$MULTICA_VCS_SECRET_KEY"
+        elif [ "$(env_val MULTICA_VCS_SECRET_KEY)" != "$MULTICA_VCS_SECRET_KEY" ]; then
+          die "MULTICA_VCS_SECRET_KEY differs from .env; existing key was not changed."
+        fi
+      fi
+    else
+      set_env_var MULTICA_VCS_SECRET_KEY "$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+      validate_multica_key
+    fi
+    if [ "${MULTICA_JWT_SECRET+x}" = x ]; then
+      [ -n "$MULTICA_JWT_SECRET" ] || die "MULTICA_JWT_SECRET must not be empty."
+      if [ -z "$(env_val MULTICA_JWT_SECRET)" ]; then
+        case "$MULTICA_JWT_SECRET" in
+          *[!a-zA-Z0-9._~-]*) die "Set MULTICA_JWT_SECRET durably in .env before exporting a value with special characters." ;;
+        esac
+        set_env_var MULTICA_JWT_SECRET "$MULTICA_JWT_SECRET"
+      elif [ "$(env_val MULTICA_JWT_SECRET)" != "$MULTICA_JWT_SECRET" ]; then
+        die "MULTICA_JWT_SECRET differs from .env; existing secret was not changed."
+      fi
+    elif [ -z "$(env_val MULTICA_JWT_SECRET)" ]; then
+      set_env_var MULTICA_JWT_SECRET "$(rand_hex)"
+    fi
+    if [ "${MULTICA_POSTGRES_PASSWORD+x}" = x ]; then
+      validate_multica_postgres_password
+      if [ -z "$(env_val MULTICA_POSTGRES_PASSWORD)" ]; then
+        set_env_var MULTICA_POSTGRES_PASSWORD "$MULTICA_POSTGRES_PASSWORD"
+      elif [ "$(env_val MULTICA_POSTGRES_PASSWORD)" != "$MULTICA_POSTGRES_PASSWORD" ]; then
+        die "MULTICA_POSTGRES_PASSWORD differs from .env; reconcile the durable database credential before continuing."
+      fi
+    elif [ -z "$(env_val MULTICA_POSTGRES_PASSWORD)" ]; then
+      set_env_var MULTICA_POSTGRES_PASSWORD "$(rand_hex)"
+    fi
+    validate_multica_postgres_password
   fi
   :
 }
@@ -259,7 +312,13 @@ sync_openclaw_users() {
   fi
 }
 
-dc() { docker compose --profile "$PLATFORM" "$@"; }
+dc() {
+  case "$PLATFORM" in
+    multica) docker compose -f docker-compose.multica.yml --profile "$PLATFORM" "$@" ;;
+    hermes) docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile "$PLATFORM" "$@" ;;
+    *) docker compose --profile "$PLATFORM" "$@" ;;
+  esac
+}
 
 _running_container() {
   case "$PLATFORM" in
@@ -406,15 +465,40 @@ case "$ACTION" in
   logs)     dc logs -f --tail=200 ;;
   status)   dc ps ;;
   update)
+    if [ "$PLATFORM" = multica ]; then
+      [ "$#" -eq 0 ] || die "Multica update does not support scheduling or arguments."
+      validate_multica_key
+      validate_multica_postgres_password
+      if [ "${MULTICA_VCS_SECRET_KEY+x}" = x ] && [ "$(env_val MULTICA_VCS_SECRET_KEY)" != "$MULTICA_VCS_SECRET_KEY" ]; then
+        die "MULTICA_VCS_SECRET_KEY differs from .env; existing key was not changed."
+      fi
+      if [ "${MULTICA_JWT_SECRET+x}" = x ] && [ "$(env_val MULTICA_JWT_SECRET)" != "$MULTICA_JWT_SECRET" ]; then
+        die "MULTICA_JWT_SECRET differs from .env; existing secret was not changed."
+      fi
+      [ -n "${MULTICA_JWT_SECRET-$(env_val MULTICA_JWT_SECRET)}" ] || die "MULTICA_JWT_SECRET must not be empty."
+      if [ "${MULTICA_POSTGRES_PASSWORD+x}" = x ] && [ "$(env_val MULTICA_POSTGRES_PASSWORD)" != "$MULTICA_POSTGRES_PASSWORD" ]; then
+        die "MULTICA_POSTGRES_PASSWORD differs from .env; reconcile the durable database credential before continuing."
+      fi
+      warn "Multica update is nontransactional: no automatic backup or rollback."
+      dc pull multica-postgres multica-backend multica-frontend
+      dc up -d --wait
+      exit 0
+    fi
     # Transactional: backup → pull → recreate → canary → auto-rollback.
     # `update install`/`uninstall` (in "$@") schedule it via host cron.
     exec scripts/selfupdate.sh "$PLATFORM" "$@"
     ;;
   doctor)
-    [ "$PLATFORM" = multica ] && { say "No doctor available for multica — check: ./deploy.sh multica logs"; exit 0; }
+    [ "$PLATFORM" = multica ] && die "Multica doctor is not available; inspect status and logs manually."
     exec scripts/doctor.sh "$PLATFORM" "$@"
     ;;
   config)
+    if [ "$PLATFORM" = multica ]; then
+      [ -f .env ] || die "No .env found; run ./deploy.sh multica up first."
+      "${EDITOR:-nano}" .env
+      say "Configuration edited; run ./deploy.sh multica up to apply."
+      exit 0
+    fi
     case "$PLATFORM" in
       openclaw) f=data/openclaw/openclaw.json ;;
       hermes)   f=data/hermes/config.yaml ;;
@@ -445,6 +529,7 @@ except Exception as e:
     dc restart
     ;;
   sync)
+    [ "$PLATFORM" != multica ] || die "Multica sync is unsupported; use ./deploy.sh multica team-setup for explicit team reconciliation."
     # Template → live, backed up first. Hermes deep-merges (keeps live-only
     # runtime keys like home_channel); OpenClaw regenerates + re-injects .env
     # allowlists (drops runtime-only pairing approvals — keep them in .env).
@@ -532,6 +617,7 @@ PY
     esac
     ;;
   backup)
+    [ "$PLATFORM" != multica ] || die "Multica backup is unsupported: PostgreSQL and upload volumes are not backed up by this command."
     mkdir -p backups
     f="backups/${PLATFORM}-$(date +%Y%m%d-%H%M%S).tar.gz"
     paths=("data/$PLATFORM")
@@ -545,6 +631,7 @@ PY
     say "Backup written: $f"
     ;;
   cli)
+    [ "$PLATFORM" != multica ] || die "Multica cli proxy is unsupported; use the host multica CLI directly."
     case "$PLATFORM" in
       openclaw) dc run --rm --no-deps --entrypoint node openclaw dist/index.js "$@" ;;
       hermes)   dc run --rm hermes "$@" ;;
@@ -560,7 +647,7 @@ PY
     ;;
   team-setup)
     [ "$PLATFORM" = multica ] || die "'team-setup' is only supported for the multica platform"
-    exec config/multica/seed-team.sh
+    exec config/multica/seed-team.sh "$@"
     ;;
   *) usage ;;
 esac

@@ -6,7 +6,7 @@ trap sandbox_teardown EXIT
 cd "$SANDBOX"
 
 # The gateway and transactional updater must track the floating upstream tag.
-grep -Fq 'image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}' "$REPO_ROOT/docker-compose.yml" \
+grep -Fq 'image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}' "$REPO_ROOT/docker-compose.hermes.yml" \
   || fail 'Hermes Compose default must use latest'
 grep -Fq 'def="nousresearch/hermes-agent:latest"' scripts/selfupdate.sh \
   || fail 'Hermes updater default must match Compose latest'

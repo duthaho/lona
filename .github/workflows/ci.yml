@@ -34,14 +34,8 @@ jobs:
           PY
       - name: Validate shell syntax
         run: bash -n deploy.sh scripts/*.sh tests/*.sh
-      - name: Validate Compose model
-        env:
-          HERMES_DASHBOARD_PASSWORD: ci-dashboard
-          HERMES_API_SERVER_KEY: ci-hermes-api
-          COHUB_API_TOKEN: ci-cohub-token
-        run: |
-          cp .env.example .env
-          docker compose --profile hermes config --quiet
+      - name: Validate isolated Compose models
+        run: bash tests/compose_models_test.sh
       - name: Build Cohub image
         run: docker build -t lona-cohub:ci apps/cohub
 
