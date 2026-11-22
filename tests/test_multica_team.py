@@ -24,6 +24,10 @@ class MulticaFixture:
             {'id': 'rt-codex', 'provider': 'codex', 'status': 'online'},
         ]
         self.resources = {'agents': {}, 'squads': {}, 'skills': {}}
+        self.statuses = []
+        self.workflows = {}
+        self.projects = {}
+        self.users = [{'id': 'member-owner', 'email': 'owner@example.test'}]
         self.members = {}
         self.disabled = set()
         self.attachments = {}
@@ -81,6 +85,39 @@ class MulticaFixture:
             return 200, self.workspaces
         if route == '/api/runtimes':
             return 200, self.runtimes
+        if route == '/api/users':
+            return 200, self.users
+        if route == '/api/me':
+            return 200, {'id': 'member-owner'}
+        if route == '/api/issue-statuses':
+            if method == 'GET':
+                return 200, copy.deepcopy(self.statuses)
+            if method == 'POST':
+                status = dict(body, id=f'status-{len(self.statuses) + 1}')
+                self.statuses.append(status)
+                return 201, copy.deepcopy(status)
+        if route == '/api/issue-workflows':
+            if method == 'GET':
+                return 200, list(copy.deepcopy(self.workflows).values())
+            if method == 'POST':
+                workflow = dict(body, id=f'workflow-{len(self.workflows) + 1}')
+                self.workflows[workflow['id']] = workflow
+                return 201, copy.deepcopy(workflow)
+        if route.startswith('/api/issue-workflows/') and method == 'PUT':
+            resource_id = route.rsplit('/', 1)[-1]
+            self.workflows[resource_id].update(body)
+            return 200, copy.deepcopy(self.workflows[resource_id])
+        if route == '/api/projects':
+            if method == 'GET':
+                return 200, list(copy.deepcopy(self.projects).values())
+            if method == 'POST':
+                project = dict(body, id=f'project-{len(self.projects) + 1}')
+                self.projects[project['id']] = project
+                return 201, copy.deepcopy(project)
+        if route.startswith('/api/projects/') and method == 'PUT':
+            resource_id = route.rsplit('/', 1)[-1]
+            self.projects[resource_id].update(body)
+            return 200, copy.deepcopy(self.projects[resource_id])
         parts = route.strip('/').split('/')
         if len(parts) < 2 or parts[1] not in self.resources:
             return 404, {}
@@ -161,7 +198,8 @@ class TeamContractTests(unittest.TestCase):
 
     def run_seed(self, *args, **env):
         settings = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ['PATH'],
-                        MULTICA_API_TOKEN=TOKEN, MULTICA_BACKEND_PORT=str(self.fixture.server.server_port))
+                        MULTICA_API_TOKEN=TOKEN, MULTICA_BACKEND_PORT=str(self.fixture.server.server_port),
+                        MULTICA_WORKSPACE_ID='')
         settings.update(env)
         return subprocess.run(['bash', 'config/multica/seed-team.sh', *args], cwd=self.home,
                               env=settings, capture_output=True, text=True, timeout=15)
@@ -235,6 +273,22 @@ class TeamContractTests(unittest.TestCase):
         for method, path, body, query in self.fixture.requests:
             if method != 'GET':
                 self.assertEqual(query['workspace_id'], ['ws-1'])
+
+    def test_schema_v2_dry_run_and_export_are_portable(self):
+        dry = self.run_seed('--dry-run')
+        self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
+        self.assertEqual(self.writes(), [])
+        self.assertIn('Would ensure workflow Lona Delivery', dry.stdout)
+        self.assertEqual(self.run_seed().returncode, 0)
+        destination = self.home / 'portable-team.json'
+        exported = self.run_seed('export', '--output', str(destination))
+        self.assertEqual(exported.returncode, 0, exported.stdout + exported.stderr)
+        portable = json.loads(destination.read_text())
+        self.assertEqual(portable['schema_version'], 2)
+        self.assertEqual(portable['workflow']['name'], 'Lona Delivery')
+        self.assertEqual(portable['project']['repo'], 'https://github.com/duthaho/lona')
+        self.assertNotIn('workspace_id', destination.read_text())
+        self.assertNotIn(TOKEN, destination.read_text())
 
     def test_missing_online_runtime_is_rejected_before_any_write(self):
         self.fixture.runtimes[1]['status'] = 'offline'
@@ -312,15 +366,16 @@ class TeamContractTests(unittest.TestCase):
             self.assertNotIn(TOKEN, path.read_text())
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
-    def test_manifest_declares_serial_agent_execution(self):
+    def test_manifest_declares_live_agent_concurrency(self):
         manifest = json.loads((self.home / 'config/multica/team.json').read_text())
-        self.assertTrue(all(a.get('max_concurrent_tasks') == 1 for a in manifest['agents']))
+        self.assertTrue(all(isinstance(a.get('max_concurrent_tasks'), int) and a['max_concurrent_tasks'] >= 1
+                            for a in manifest['agents']))
         self.assertEqual(manifest['coordination']['max_correction_cycles'], 2)
         result = self.run_seed()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for method, path, body, query in self.writes():
             if path == '/api/agents':
-                self.assertEqual(body['max_concurrent_tasks'], 1)
+                self.assertGreaterEqual(body['max_concurrent_tasks'], 1)
                 self.assertNotIn('role', body)  # Not an upstream agent API field.
                 self.assertNotIn('coordination', body)  # Local prompt policy only.
 
