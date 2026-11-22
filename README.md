@@ -1,260 +1,211 @@
 # Lona
 
-**Your personal AI assistant, self-hosted with one command.**
-
-Lona is a batteries-included deployment kit for [OpenClaw](https://openclaw.ai) and [Hermes Agent](https://github.com/NousResearch/hermes-agent) — two of the leading open-source personal AI assistant platforms. Hermes deployments also include **Cohub**, Lona's deterministic personal-coworker dashboard and workflow control plane. Pick a platform, run one command on any Linux server, and talk to your assistant on Telegram minutes later.
+Lona is a self-hosted personal AI-assistant deployment kit. It runs either
+[OpenClaw](https://openclaw.ai) or [Hermes Agent](https://github.com/NousResearch/hermes-agent)
+with Docker Compose, connects them to Telegram, and uses OpenRouter or a
+supported subscription provider for models. Hermes deployments also include
+Cohub, a local workflow dashboard and control plane.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![OpenClaw](https://img.shields.io/badge/platform-OpenClaw-orange)](https://openclaw.ai)
-[![Hermes Agent](https://img.shields.io/badge/platform-Hermes%20Agent-purple)](https://github.com/NousResearch/hermes-agent)
 
-## Highlights
+## Features
 
-- **One command, zero manual setup** — `./deploy.sh openclaw` or `./deploy.sh hermes` handles Docker installation, secret generation, config seeding, and startup
-- **Free by default** — ships configured for OpenRouter's free-model router with automatic failover; runs at $0/month
-- **Subscription-powered coding** — use your existing ChatGPT Plus/Pro or Claude Pro/Max plan as the assistant's brain, no API billing
-- **Telegram-native** — DMs, groups, and forum topics (each topic is an isolated session); long-polling means no inbound ports and works behind NAT
-- **Secure defaults** — deny-by-default access control, loopback-only dashboards, auto-generated secrets, secrets never committed
-- **Portable gateway state** — OpenClaw/Hermes state lives in `./data/`; Multica uses separate Docker volumes and needs its own recovery plan
-- **Deterministic coworker workflows** — Hermes deployments include Cohub for versioned graphs, retries, approvals, artifacts, and restart-safe execution
-- **Portable enterprise agent team** — Hermes seeds an orchestrator, ten role-specific profiles, bundled skills and an independent-review Kanban workflow ([setup and limits](docs/enterprise-team.md))
+- Deploy and operate OpenClaw, Hermes, or the optional Multica agent platform
+  through one entry point: `deploy.sh`.
+- Run Telegram bots with allowlists and loopback-only dashboards by default.
+- Use OpenRouter's free-model chain by default, or follow the subscription
+  provider guidance in [docs/subscriptions.md](docs/subscriptions.md).
+- Run Hermes with Cohub for deterministic workflows, approvals, artifacts, and
+  restart-safe execution.
+- Seed and reconcile the Hermes enterprise team, or provision a Multica team.
+- Back up OpenClaw or Hermes runtime state and use the built-in health and
+  update commands for those two runtimes.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    U([You]) <--> TG[Telegram]
-    TG <-- long polling --> GW
-
-    subgraph VPS [Your server · Docker]
-        GW["Gateway container<br/>(OpenClaw or Hermes)"]
-        CH["Cohub<br/>Hermes workflow control plane"]
-        DATA[("./data/<br/>config · sessions · memory")]
-        GW --- DATA
-        GW <--> CH
-        CH --- DATA
-    end
-
-    GW --> OR["OpenRouter<br/>(free models)"]
-    GW -.-> SUB["ChatGPT / Claude<br/>(your subscription)"]
-    U -. SSH tunnel .-> UI["Dashboard<br/>127.0.0.1 only"]
-    UI --- GW
+    U[You] <--> T[Telegram]
+    T <-- long polling --> G[OpenClaw or Hermes gateway]
+    G --> M[OpenRouter or subscription provider]
+    G --- D[./data runtime state]
+    G <--> C[Cohub, Hermes only]
+    W[Multica, optional] --- P[(Docker volumes)]
 ```
+
+OpenClaw and Hermes use the main Compose file; Hermes adds the Cohub overlay.
+Multica is an independent Compose deployment with its own database and upload
+volumes. Its operational limitations are documented in
+[config/multica/DEPLOYMENT.md](config/multica/DEPLOYMENT.md).
+
+## Prerequisites
+
+- Linux host with Docker Compose available to the deploying user.
+- Git for a normal clone-based installation. The bootstrap script installs Git
+  and Docker when needed.
+- For OpenClaw or Hermes: an OpenRouter API key and Telegram bot token. A
+  numeric Telegram user allowlist is recommended.
+- For Multica: plan secure recovery for its Docker volumes and secrets before
+  relying on it for valuable data.
 
 ## Quick start
 
-### Prerequisites
-
-| | Where to get it |
-|---|---|
-| A Linux server (or any machine with Docker) | any VPS provider — 1 vCPU / 1 GB is enough |
-| OpenRouter API key | [openrouter.ai/keys](https://openrouter.ai/keys) — free, no credit card |
-| Telegram bot token | DM [@BotFather](https://t.me/BotFather) → `/newbot` |
-| Your Telegram user id | DM [@userinfobot](https://t.me/userinfobot) |
-
-### Fresh server — one line
+On a fresh host, bootstrap an OpenClaw deployment:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/duthaho/lona/main/scripts/bootstrap.sh | bash -s -- openclaw
 ```
 
-Installs git and Docker if missing, clones this repo to `~/lona`, and runs the deploy. Use `hermes` instead of `openclaw` to pick the other platform.
-
-### Machine with Docker
-
-```bash
-git clone https://github.com/duthaho/lona.git && cd lona
-./deploy.sh openclaw          # or: ./deploy.sh hermes
-```
-
-First run prompts for your OpenRouter key and Telegram token, generates auth secrets, seeds the config, pulls the image, and starts the gateway. The Hermes profile also builds and starts Cohub. Then just DM your bot.
-
-## Commands
-
-```
-./deploy.sh <openclaw|hermes> [action]
-```
-
-| Action | Description |
-|---|---|
-| `up` *(default)* | Install prerequisites, seed config, pull image, start |
-| `down` / `restart` | Stop / restart |
-| `logs` | Follow container logs |
-| `status` | Container status |
-| `config` | Edit the **live** config (`data/<platform>/…`) in `$EDITOR`, apply on save |
-| `sync` | Push the repo **template** (`config/<platform>/…`) into the live config without hand-editing: Hermes backs up root config/SOUL, deep-merges while retaining live topic routes and reconciles managed profile skills/instructions (requires host PyYAML); OpenClaw regenerates from template + `.env` allowlists. Then applies (Hermes restart · OpenClaw hot-reload) |
-| `update` | Transactional update: back up, pull, recreate, canary, auto-rollback on failure (see [Safe updates](#safe-updates)) |
-| `backup` | Archive runtime state into `./backups/`; Hermes backups also include Cohub |
-| `doctor` | Probe the model chain's health (see [Chain health](#chain-health)) |
-| `cli …` | Run the platform's own CLI inside the container |
-
-## Multica agent teams (opt-in)
-
-Multica is a separate web/control-plane deployment with a seven-agent Build Team.
-It does not share the gateway platforms' free-model, state-directory, Telegram
-access-control or transactional-update guarantees.
+Use `hermes` as the final argument to bootstrap Hermes instead. On a host that
+already has Docker:
 
 ```bash
-./deploy.sh multica up                 # generates secrets and starts the web stack
-./deploy.sh multica install-agents     # installs CLIs; authentication is separate
-# Create your account/workspace, authenticate coding tools and connect a daemon.
-# Export MULTICA_API_TOKEN or enter it via the hidden interactive prompt.
+git clone https://github.com/duthaho/lona.git
+cd lona
+./deploy.sh openclaw
+# or: ./deploy.sh hermes
+```
+
+The first `up` run creates `.env` from `.env.example`, generates the secrets it
+owns, seeds runtime configuration below `data/`, pulls images, and starts the
+selected profile. Message the configured Telegram bot after startup.
+
+For OpenClaw, run `cp .env.example .env` and set `TELEGRAM_ALLOWED_USERS` to
+your numeric Telegram user ID before the first `up` to use an explicit
+allowlist. Without it, OpenClaw uses Telegram pairing: send the bot a message,
+then approve the returned code:
+
+```bash
+./deploy.sh openclaw cli pairing approve telegram <CODE>
+```
+
+## Configuration
+
+Keep `.env` private and out of version control. The deployment reads names from
+`.env.example`; set only the variables relevant to the selected runtime. Never
+put their values in issues, pull requests, or commits.
+
+| Purpose | Environment variable names |
+| --- | --- |
+| Model access | `OPENROUTER_API_KEY`, `GOOGLE_API_KEY` |
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_GROUP_ALLOWED_CHATS`, `TELEGRAM_GROUP_ALLOWED_USERS` |
+| Optional GitHub skills | `GITHUB_TOKEN` |
+| OpenClaw | `OPENCLAW_IMAGE`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_BIND`, `OPENCLAW_PORT` |
+| Hermes and Cohub | `HERMES_IMAGE`, `HERMES_UID`, `HERMES_GID`, `HERMES_DASHBOARD_BIND`, `HERMES_DASHBOARD_USER`, `HERMES_DASHBOARD_PASSWORD`, `HERMES_API_SERVER_KEY`, `HERMES_DESIGNER_API_BASE`, `HERMES_DESIGNER_API_KEY`, `COHUB_BIND`, `COHUB_PORT`, `COHUB_API_TOKEN` |
+| Shared operational settings | `DOCTOR_CRON_SCHEDULE`, `UPDATE_CRON_SCHEDULE`, `UPDATE_CANARY_WAIT`, `DOCKER_MTU` |
+| Multica | `MULTICA_JWT_SECRET`, `MULTICA_POSTGRES_PASSWORD`, `MULTICA_VCS_SECRET_KEY`, `MULTICA_BACKEND_BIND`, `MULTICA_BACKEND_PORT`, `MULTICA_FRONTEND_BIND`, `MULTICA_FRONTEND_PORT`, `MULTICA_ALLOW_SIGNUP`, `MULTICA_API_TOKEN`, `MULTICA_WORKSPACE_ID`, `MULTICA_REVIEWER_EMAIL` |
+| Optional Multica integrations | `MULTICA_LLM_BASE_URL`, `MULTICA_LLM_DEFAULT_MODEL`, `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, `MULTICA_TELEGRAM_SECRET_KEY` |
+
+`deploy.sh` generates the required Multica secrets on its first `up` run.
+`MULTICA_API_TOKEN` is used only for authenticated team setup. For the precise
+Multica recovery and update constraints, read
+[config/multica/DEPLOYMENT.md](config/multica/DEPLOYMENT.md).
+
+## Deployment variants
+
+`deploy.sh` accepts a runtime and an action:
+
+```text
+./deploy.sh <openclaw|hermes|multica> [action]
+```
+
+| Runtime | Compose configuration | Start command |
+| --- | --- | --- |
+| OpenClaw | `docker-compose.yml` | `./deploy.sh openclaw up` |
+| Hermes with Cohub | `docker-compose.yml` + `docker-compose.hermes.yml` | `./deploy.sh hermes up` |
+| Multica | `docker-compose.multica.yml` | `./deploy.sh multica up` |
+
+Common actions are `up`, `down`, `restart`, `logs`, `status`, and `config`.
+OpenClaw and Hermes additionally support `sync`, `backup`, `doctor`, `update`,
+and `cli`; Hermes also supports `skills`. Multica supports `install-agents` and
+`team-setup`, but its `backup`, `doctor`, `cli`, and generic `sync` commands are
+intentionally unsupported.
+
+For OpenClaw and Hermes, `sync` applies the checked-in `config/<platform>/`
+templates to the live runtime configuration.
+
+For OpenClaw and Hermes, schedule or remove scheduled health checks with
+`doctor install` and `doctor uninstall`. The doctor reads
+`DOCTOR_CRON_SCHEDULE`. Manage scheduled transactional updates with `update install`
+and `update uninstall`; those runs read `UPDATE_CRON_SCHEDULE` and
+`UPDATE_CANARY_WAIT`.
+
+Examples:
+
+```bash
+./deploy.sh openclaw status
+./deploy.sh hermes skills list
+./deploy.sh hermes doctor --deep
+./deploy.sh multica install-agents
 ./deploy.sh multica team-setup --workspace-id <workspace-uuid>
-./deploy.sh multica team-setup --workspace-id <workspace-uuid> --sync
 ```
 
-See [deployment commands and recovery limitations](config/multica/DEPLOYMENT.md)
-and [team policy, safe reconciliation and primary-source rationale](docs/multica-team.md).
-Team setup preserves customized instructions/runtime/model/auth by default,
-resolves workspace/runtime ambiguity explicitly, and fails on provisioning or
-readback errors. Squad-leader turns coordinate rather than implement/review;
-non-author reviewers, exact-head checks and bounded correction cycles govern
-handoff. Prompt rules are not authorization or spend controls.
-
-**Limits:** Multica persists database/uploads in Docker volumes, not `./data`.
-Its `backup`, `doctor`, `cli` proxy and generic `sync` are unsupported and fail
-explicitly. `update` is nontransactional, without automatic backup/rollback;
-`config` edits `.env`, then `up` applies it. Establish tested recovery and review
-upstream migrations before using it for valuable data. Autopilots are suggestions
-only, not provisioned by team setup. No provider execution or live deployment is
-proved by template validation.
-
-## Cohub personal coworker
-
-`./deploy.sh hermes` starts Cohub alongside Hermes. Cohub owns deterministic workflow routing, retries, leases, payload-bound human approvals, artifacts, and append-only run traces; Hermes continues to own reasoning, tools, skills, memory, browser automation, models, and messaging. Hermes tool approvals are bridged into Cohub as durable, one-shot review records and resume the same Hermes run after a decision.
-
-The services communicate only on the private Compose network. Hermes' Runs API port `8642` is **not** published to the host. Cohub itself stays on loopback by default:
+For a direct Compose syntax check, use the exact files for each variant:
 
 ```bash
-ssh -L 8765:127.0.0.1:8765 user@your-vps
-# Open http://127.0.0.1:8765 and enter COHUB_API_TOKEN from .env.
+docker compose --profile openclaw config -q
+docker compose -f docker-compose.yml -f docker-compose.hermes.yml --profile hermes config -q
+docker compose -f docker-compose.multica.yml --profile multica config -q
 ```
 
-Runtime state is stored in `data/cohub/`. `./deploy.sh hermes backup` includes both `data/hermes/` and `data/cohub/` in one archive. The workflow engine and developer documentation live under [`apps/cohub/`](apps/cohub/README.md).
+## Operations and access
 
-## Models
+OpenClaw and Hermes persist runtime state under `data/openclaw/` and
+`data/hermes/`; Cohub uses `data/cohub/`. Run `./deploy.sh <platform> backup`
+to archive OpenClaw or Hermes state. Multica persists PostgreSQL and uploads in
+Docker volumes, so it needs an independent, tested recovery plan.
 
-### Free tier (default)
-
-Both platforms ship with a **curated chain of free models**, ordered for reliability first:
-
-1. `nvidia/nemotron-3-ultra-550b-a55b:free` — strong agentic reasoner, 1M context, hosted by NVIDIA itself so it's rarely rate-limited
-2. `z-ai/glm-5.2:free` — the smartest free model by [Artificial Analysis](https://artificialanalysis.ai) index, but its single provider is frequently congested (429s), so it serves as fallback / manual switch
-3. `nvidia/nemotron-3-super-120b-a12b:free` / `google/gemma-4-31b-it:free` — additional fallbacks (Gemma adds vision)
-
-We deliberately avoid OpenRouter's `openrouter/free` auto-router: it picks free models *at random*, including tiny low-quality ones.
-
-**Gemini for free:** OpenRouter's free pool no longer carries Gemini/DeepSeek/Grok, but Google's own [AI Studio](https://aistudio.google.com) key has a generous free tier. Set `GOOGLE_API_KEY` in `.env` and switch the model to `gemini-3.6-flash` (both platforms support it natively — see the config templates; older Gemini 2.5 models are closed to new API users).
-
-> **Quota note:** OpenRouter's free-tier daily cap is per *account*, not per model. A one-time $10 credit purchase raises it to 1,000 requests/day — the best value upgrade for a personal assistant. Free model ids rotate; browse [openrouter.ai/models?max_price=0](https://openrouter.ai/models?max_price=0).
-
-### Chain health
-
-Free model ids rotate and their hosts congest — and a dead chain fails *silently*. The built-in doctor makes it observable:
-
-```bash
-./deploy.sh <platform> doctor            # listing check on every model + 1-token probe of the primary
-./deploy.sh <platform> doctor --deep     # 1-token probe of every model (one free-tier request each)
-./deploy.sh <platform> doctor install    # cron every 6h, DMs you on Telegram when health changes
-./deploy.sh <platform> doctor uninstall  # remove the cron entry
-```
-
-Statuses: `OK` · `DEAD` (id rotated/removed) · `LIMITED` (429 congestion) · `ERROR`. Exit codes: `0` healthy, `1` a fallback is degraded, `2` the primary is unusable. The zero-cost listing check also runs automatically after every `up`/`update` (warn-only). The default probe costs one free-tier request; a `DEAD` id is caught by the free listing tier and never probed. A transient `ERROR` (timeout / 5xx) is retried once before it counts, so a momentary blip doesn't cry wolf; a real `LIMITED` (429) is reported immediately, never retried (tune with `DOCTOR_PROBE_RETRIES`, default 1). Alerts fire only on state *change* (including recovery) — a persistent outage won't spam you. Schedule via `DOCTOR_CRON_SCHEDULE` in `.env`. The doctor never modifies your config.
-
-### Your subscription (recommended for coding)
-
-Free models handle chat well but lag on agentic coding. If you already pay for **ChatGPT Plus/Pro** or **Claude Pro/Max**, both platforms can use those plans directly — headless-friendly login included:
-
-```bash
-./deploy.sh openclaw cli models auth login --provider openai     # ChatGPT → OpenClaw
-./deploy.sh hermes cli auth add openai-codex                     # ChatGPT → Hermes
-```
-
-Full setup, the Claude paths, and platform caveats: **[docs/subscriptions.md](docs/subscriptions.md)**.
-
-## Telegram access control
-
-| | OpenClaw | Hermes |
-|---|---|---|
-| **DMs** | Allowlist: `TELEGRAM_ALLOWED_USERS` (injected on `up`; first id becomes command owner). Empty → pairing: stranger gets a code, you approve it | Allowlist: `TELEGRAM_ALLOWED_USERS` |
-| **Groups** | Group allowlist, injected by deploy.sh from `TELEGRAM_GROUP_ALLOWED_CHATS` | Your allowlisted users work instantly; add the group id to open it to all members |
-| **Group noise** | `requireMention: true` set per injected group | `require_mention: true` set in the template |
-| **Forum topics** | Own session per topic; per-topic agent override | Own session per topic; per-topic skill binding |
-
-To use the bot in a group: disable privacy mode in @BotFather (`/setprivacy`) or make the bot an admin, **remove and re-add the bot**, grab the chat id from `logs`, set `TELEGRAM_GROUP_ALLOWED_CHATS` in `.env`, and run `up`.
+Dashboards bind to loopback by default. Access them through an SSH tunnel or a
+properly secured reverse proxy. Cohub is available at its configured loopback
+port (default `http://127.0.0.1:8765`) and uses `COHUB_API_TOKEN`; the Hermes
+API stays on the private Compose network. See
+[docs/multica-team.md](docs/multica-team.md) for the Multica team workflow and
+[docs/enterprise-team.md](docs/enterprise-team.md) for the Hermes enterprise-team
+configuration.
 
 ## Safe updates
 
-This section applies to **OpenClaw and Hermes only**, not Multica.
+OpenClaw and Hermes updates are transactional: `./deploy.sh <platform> update`
+backs up runtime state, pulls and recreates the selected runtime, checks it, and
+rolls back when the update check fails. The Multica update command is not
+transactional; review its constraints in
+[config/multica/DEPLOYMENT.md](config/multica/DEPLOYMENT.md) before using it.
 
-Staying current is the security baseline (the 2026 OpenClaw pairing CVE only
-reached boxes that pulled) — but a blind `pull && recreate` can swap in a
-broken image and leave your assistant down. `update` is **transactional**: it
-takes an all-or-nothing step and can't leave the box worse than it started.
+## Testing
+
+Run the repository shell test suite from the project root:
 
 ```bash
-./deploy.sh <platform> update            # back up → pull → recreate → canary → rollback-on-failure
-./deploy.sh <platform> update install    # cron (daily 04:00), DMs you on success/rollback
-./deploy.sh <platform> update uninstall  # remove the cron entry
+bash tests/run.sh
 ```
 
-What one run does:
+The suite covers deployment wiring, Compose profiles, documentation checks,
+Multica deployment behavior, and helper scripts. Run the Compose configuration
+commands above when changing Compose files or environment-variable wiring.
 
-1. **Snapshot** — record the running image id and archive `data/<platform>` into `./backups/` (the rollback point).
-2. **Pull + recreate** the latest image.
-3. **Canary** — wait for the new container to report **running** and (for OpenClaw, which ships a healthcheck) **healthy**, up to `UPDATE_CANARY_WAIT` seconds (default 120). A crash-looping or unhealthy container fails fast.
-4. **On success** — keep the new image and run the same post-deploy checks as `up` (model-chain quick check + OpenClaw security audit).
-5. **On failure** — **auto-rollback**: restore `data/<platform>` from the snapshot and retag/restart the previous image, returning the box to its exact pre-update state.
+## Project layout
 
-If the pulled image is identical to the running one, `update` reports *already
-up to date* and does nothing else — so a scheduled run on an unchanged image is
-a silent no-op. With `--notify` (used by the installed cron entry) it DMs the
-first `TELEGRAM_ALLOWED_USERS` id **only** on a real change: ✅ updated or
-⚠️ rolled back. Exit codes: `0` updated or already-current, `4` rolled back,
-`5` rollback itself failed (needs a human). Schedule via `UPDATE_CRON_SCHEDULE`
-in `.env`.
-
-## Day-2 operations
-
-| Task | How |
-|---|---|
-| Change model, channels, skills | Edit the repo template `config/<platform>/…`, then `./deploy.sh <platform> sync` (template → live, keeps runtime keys, backs up + applies). Or `./deploy.sh <platform> config` to hand-edit the live file directly |
-| Change secrets or ports (`.env`) | edit `.env`, then `./deploy.sh <platform> up` (recreate — `restart` won't pick up env) |
-| Upgrade platform version | `./deploy.sh <platform> update` — transactional (backup → canary → auto-rollback, see [Safe updates](#safe-updates)); **run this regularly** or `update install` to schedule it: OpenClaw shipped a critical pairing privilege-escalation fix in 2026.3.28 ([CVE-2026-33579](https://nvd.nist.gov/vuln/detail/CVE-2026-33579)); staying current is the security baseline |
-| Security check (OpenClaw) | runs automatically on `up`/`update`; manual: `./deploy.sh openclaw cli security audit --deep` |
-| Back up all state | `./deploy.sh <platform> backup` |
-| Check model-chain health | `./deploy.sh <platform> doctor` — or `doctor install` for scheduled checks with Telegram alerts |
-| Switch platforms | `./deploy.sh openclaw down && ./deploy.sh hermes` — shared `.env`. Hermes can import OpenClaw state: `./deploy.sh hermes cli claw migrate` |
-| Open the dashboard | `ssh -L 18789:127.0.0.1:18789 user@vps` (OpenClaw) / `ssh -L 9119:127.0.0.1:9119 -L 8765:127.0.0.1:8765 user@vps` (Hermes + Cohub) |
-
-## Security model
-
-- **Network:** only Telegram long-polling leaves the box; dashboards bind to loopback and are reached via SSH tunnel. Hermes' Cohub API is protected by a generated bearer token, and the underlying Hermes Runs API stays private to the Compose network. Expose dashboards only behind a TLS reverse proxy (change `OPENCLAW_BIND`, `HERMES_DASHBOARD_BIND`, or `COHUB_BIND`).
-- **Access:** deny-by-default on both platforms — unknown Telegram users are blocked, groups must be allowlisted. OpenClaw DMs prefer an explicit numeric allowlist over pairing (the upstream-recommended one-owner setup), and each DM sender gets an isolated session.
-- **Blast radius:** free models are markedly easier to prompt-inject than frontier ones, so the OpenClaw template ships with workspace-only filesystem access and elevated tools disabled, and the Hermes template caps tool-loop iterations and hard-stops runaway loops. All of it is plain config — relax per agent once you move to a stronger model.
-- **Audit:** `deploy.sh` runs OpenClaw's built-in `security audit --fix` after every `up`/`update` (tightens file permissions, flips risky open policies to allowlists).
-- **Updates:** `:latest` images + `./deploy.sh <platform> update` on a regular cadence (or `update install` to schedule it) — the 2026 OpenClaw pairing CVE was fixed upstream within days and deployed boxes only got the fix by pulling. Updates are [transactional](#safe-updates): a bad image is caught by the canary and rolled back, so keeping current can't brick the bot.
-- **Secrets:** generated automatically, stored only in `.env` (`chmod 600`, git-ignored); OAuth tokens persist in git-ignored `./data/`.
-
-## Repository layout
-
+```text
+deploy.sh                      Deployment and operations entry point
+docker-compose.yml             OpenClaw Compose profile
+docker-compose.hermes.yml      Hermes and Cohub Compose overlay
+docker-compose.multica.yml     Multica Compose deployment
+.env.example                   Environment-variable template
+config/                        OpenClaw, Hermes, and Multica templates
+apps/cohub/                    Cohub service, frontend, and tests
+scripts/                       Bootstrap, health, update, skill, and team helpers
+tests/                         Repository shell test suite
+docs/                          Deployment and provider guidance
+data/                          Runtime state (generated and git-ignored)
 ```
-deploy.sh                      One-command deploy and management
-docker-compose.yml             OpenClaw profile and common bridge settings
-docker-compose.hermes.yml      Hermes + Cohub overlay (selected by deploy.sh)
-docker-compose.multica.yml     Independent Multica web/backend/database model
-.env.example                   Single configuration template
-config/
-  openclaw/openclaw.json       OpenClaw template (seeded to data/ on first run)
-  hermes/config.yaml           Hermes template (seeded to data/ on first run)
-apps/cohub/                    Deterministic workflow engine, dashboard, tests
-scripts/bootstrap.sh           curl-able installer for a fresh server
-scripts/doctor.sh              Model-chain health checks (./deploy.sh <p> doctor)
-scripts/selfupdate.sh          Transactional update + rollback (./deploy.sh <p> update)
-docs/subscriptions.md          Using ChatGPT / Claude plans instead of API keys
-tests/                         Shell test suite (bash tests/run.sh)
-data/                          Runtime state (git-ignored)
-```
+
+## Documentation
+
+- [Subscription providers](docs/subscriptions.md)
+- [Hermes enterprise team](docs/enterprise-team.md)
+- [Multica team policy and setup](docs/multica-team.md)
+- [Multica deployment and recovery constraints](config/multica/DEPLOYMENT.md)
+- [Cohub documentation](apps/cohub/README.md)
 
 ## License
 
