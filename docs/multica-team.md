@@ -58,6 +58,27 @@ an authenticated online runtime or authorize repository access [4]. Create a
 personal API token via the UI. Token input is via environment or an interactive
 hidden prompt; it is never passed to child process arguments or stored in state.
 
+### Portable workflow capture and fresh setup
+
+Schema v2 records custom statuses, the **Lona Delivery** workflow with
+name-based handlers, and the `lona` project/resource. Provisioning creates
+statuses, agents/squad/skills, workflow, then project; a rerun is idempotent
+and preserves existing customization unless `--sync` is explicitly requested.
+
+```bash
+# Read-only capture; no workspace/runtime/member IDs, emails or credentials.
+./deploy.sh multica team-setup export --workspace-id <source-workspace> \
+  --output config/multica/team.json
+
+# Validate an empty destination without API writes, then provision it.
+./deploy.sh multica team-setup --workspace-id <empty-workspace> --dry-run
+./deploy.sh multica team-setup --workspace-id <empty-workspace>
+```
+
+The `in_review` member resolves `MULTICA_REVIEWER_EMAIL` when supplied, or the
+authenticated workspace owner otherwise. A missing/ambiguous reviewer stops
+before workflow creation; the email is never written to the manifest or state.
+
 ```bash
 # Existing exported token; MULTICA_BACKEND_PORT defaults to 8083.
 ./deploy.sh multica team-setup --workspace-id <workspace-uuid>

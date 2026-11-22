@@ -23,3 +23,22 @@ All use project `lona` and the same bridge MTU. The existing `lona_multica-pgdat
 Multica `doctor`, `cli`, and `sync` are unsupported and fail explicitly. Inspect `status` and `logs`; use the host `multica` CLI, and use `team-setup` for explicit team reconciliation. `install-agents` only installs binaries. It does not authenticate a provider or establish a runtime. The printed interactive `multica setup self-host --server-url … --app-url …` changes CLI connection/auth configuration and starts a daemon; review the existing configuration and target first. The command and `multica daemon status` are documented in upstream SELF_HOSTING.md. Do not run setup automatically against existing credentials.
 
 Local model validation does not start containers. A Docker daemon is needed to verify actual service readiness, migrations, persistent volume upgrades, and recovery.
+
+## Portable team workflow
+
+`team-setup` accepts schema v2: it creates statuses, agents/squad/skills, the
+Lona Delivery workflow and the lona project in dependency order. `--dry-run`
+performs no API writes. A normal repeat is idempotent and preserves customized
+policy unless `--sync` is used after review.
+
+```sh
+./deploy.sh multica team-setup export --workspace-id <source-workspace> \
+  --output config/multica/team.json
+./deploy.sh multica team-setup --workspace-id <empty-workspace> --dry-run
+./deploy.sh multica team-setup --workspace-id <empty-workspace>
+```
+
+Export is read-only and excludes IDs, emails and credentials. The human review
+handler uses `MULTICA_REVIEWER_EMAIL` when provided, otherwise the authenticated
+workspace owner; an unresolved reviewer is a hard error. Never use a live/shared
+workspace as a provisioning test.
