@@ -49,12 +49,15 @@ services:
       MULTICA_POSTGRES_PASSWORD: ${MULTICA_POSTGRES_PASSWORD:?run ./deploy.sh multica up to generate}
       DATABASE_URL: postgres://multica:${MULTICA_POSTGRES_PASSWORD:?run ./deploy.sh multica up to generate}@multica-postgres:5432/multica?sslmode=disable
       JWT_SECRET: ${MULTICA_JWT_SECRET:?run ./deploy.sh multica up to generate}
-      FRONTEND_ORIGIN: http://127.0.0.1:${MULTICA_FRONTEND_PORT:-3000}
-      MULTICA_APP_URL: http://127.0.0.1:${MULTICA_FRONTEND_PORT:-3000}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://127.0.0.1:3000}
+      MULTICA_APP_URL: ${FRONTEND_ORIGIN:-http://127.0.0.1:3000}
       PORT: "8080"
       APP_ENV: ${MULTICA_APP_ENV:-production}
       MULTICA_DEV_VERIFICATION_CODE: ${MULTICA_DEV_VERIFICATION_CODE:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
       ALLOW_SIGNUP: ${MULTICA_ALLOW_SIGNUP:-true}
+      ALLOWED_EMAILS: ${MULTICA_ALLOWED_EMAILS:-}
       DO_NOT_TRACK: "1"
       # Reuse OpenRouter key for Multica's internal LLM helpers (title gen, follow-ups).
       MULTICA_LLM_API_KEY: ${OPENROUTER_API_KEY:-}
