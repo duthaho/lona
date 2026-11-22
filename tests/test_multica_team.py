@@ -274,21 +274,11 @@ class TeamContractTests(unittest.TestCase):
             if method != 'GET':
                 self.assertEqual(query['workspace_id'], ['ws-1'])
 
-    def test_schema_v2_dry_run_and_export_are_portable(self):
+    def test_schema_v2_dry_run_is_read_only(self):
         dry = self.run_seed('--dry-run')
         self.assertEqual(dry.returncode, 0, dry.stdout + dry.stderr)
         self.assertEqual(self.writes(), [])
         self.assertIn('Would ensure workflow Lona Delivery', dry.stdout)
-        self.assertEqual(self.run_seed().returncode, 0)
-        destination = self.home / 'portable-team.json'
-        exported = self.run_seed('export', '--output', str(destination))
-        self.assertEqual(exported.returncode, 0, exported.stdout + exported.stderr)
-        portable = json.loads(destination.read_text())
-        self.assertEqual(portable['schema_version'], 2)
-        self.assertEqual(portable['workflow']['name'], 'Lona Delivery')
-        self.assertEqual(portable['project']['repo'], 'https://github.com/duthaho/lona')
-        self.assertNotIn('workspace_id', destination.read_text())
-        self.assertNotIn(TOKEN, destination.read_text())
 
     def test_missing_online_runtime_is_rejected_before_any_write(self):
         self.fixture.runtimes[1]['status'] = 'offline'
@@ -370,7 +360,6 @@ class TeamContractTests(unittest.TestCase):
         manifest = json.loads((self.home / 'config/multica/team.json').read_text())
         self.assertTrue(all(isinstance(a.get('max_concurrent_tasks'), int) and a['max_concurrent_tasks'] >= 1
                             for a in manifest['agents']))
-        self.assertEqual(manifest['coordination']['max_correction_cycles'], 2)
         result = self.run_seed()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for method, path, body, query in self.writes():

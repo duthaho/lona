@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -128,7 +129,7 @@ def validate_team(team):
         assigned = skill.get('agents', [])
         if not isinstance(assigned, list) or any(not isinstance(a, str) or a not in names for a in assigned):
             raise SetupError('Skill references an unknown agent')
-    if team['schema_version'] == 1:
+    if team.get('schema_version', 1) == 1:
         return team
     statuses = team.get('statuses', [])
     if not isinstance(statuses, list):
@@ -210,6 +211,11 @@ def workflow_payload(team, client, agents, squads):
                 step[key] = spec[key]
         steps.append(step)
     return steps
+
+
+def comparable_steps(steps):
+    keys = ('status_key', 'handler', 'instructions', 'next_status_key', 'back_status_key')
+    return [{key: step.get(key, {'type': 'none'} if key == 'handler' else '') for key in keys} for step in steps]
 
 
 def fingerprint(value):
@@ -313,18 +319,6 @@ def provision(client, team, workspace_id='', *, registry, sync=False, adopt=Fals
         raise SetupError('Select one workspace explicitly with --workspace-id (or MULTICA_WORKSPACE_ID)')
     client.workspace = selected[0]['id']
     print('Workspace:', selected[0].get('name', client.workspace), flush=True)
-    if dry_run:
-        if team['schema_version'] == 2:
-            for spec in team.get('statuses', []):
-                print('Would ensure issue status', spec['key'], flush=True)
-        for spec in team['agents']:
-            print('Would ensure agent', spec['name'], flush=True)
-        print('Would ensure squad', team['squad']['name'], flush=True)
-        if team['schema_version'] == 2:
-            print('Would ensure workflow', team['workflow']['name'], flush=True)
-            print('Would ensure project', team['project']['title'], flush=True)
-        print('Dry run complete; 0 API writes.', flush=True)
-        return
     agents = by_name(client.listing('/api/agents'), 'agents')
     squads = by_name(client.listing('/api/squads'), 'squads')
     skills = by_name(client.listing('/api/skills'), 'skills')
@@ -350,10 +344,33 @@ def provision(client, team, workspace_id='', *, registry, sync=False, adopt=Fals
         for spec in team.get('statuses', []):
             if spec['key'] in known_status_keys:
                 continue
+            if dry_run:
+                continue
             created = client.request('POST', '/api/issue-statuses', spec)
             if not isinstance(created, dict) or created.get('key') != spec['key']:
                 raise SetupError('POST issue-statuses: readback mismatch')
             known_status_keys.add(spec['key'])
+
+    if dry_run:
+        # Validate every read dependency and handler before declaring a plan.
+        if team['schema_version'] == 2:
+            planned_agents = dict(agents)
+            planned_agents.update({spec['name']: {'id': 'planned-' + spec['name']} for spec in team['agents'] if spec['name'] not in agents})
+            planned_squads = dict(squads)
+            if team['squad']['name'] not in planned_squads:
+                planned_squads[team['squad']['name']] = {'id': 'planned-squad'}
+            workflow_payload(team, client, planned_agents, planned_squads)
+            client.listing('/api/issue-workflows')
+            client.listing('/api/projects')
+            for spec in team['statuses']:
+                print('Would ensure issue status', spec['key'], flush=True)
+            print('Would ensure workflow', team['workflow']['name'], flush=True)
+            print('Would ensure project', team['project']['title'], flush=True)
+        for spec in team['agents']:
+            print('Would ensure agent', spec['name'], flush=True)
+        print('Would ensure squad', team['squad']['name'], flush=True)
+        print('Dry run complete; 0 API writes.', flush=True)
+        return
 
     def ensure(kind, spec, existing, fields):
         policy_keys = ('description', 'content') if kind == 'skills' else ('description', 'instructions')
@@ -438,7 +455,7 @@ def provision(client, team, workspace_id='', *, registry, sync=False, adopt=Fals
                 if not isinstance(created, dict) or not created.get('id'):
                     raise SetupError('POST issue-workflows: missing resource ID')
                 existing_workflow = created
-        elif existing_workflow.get('steps') != desired_steps or existing_workflow.get('description') != workflow_spec['description']:
+        elif comparable_steps(existing_workflow.get('steps', [])) != comparable_steps(desired_steps) or existing_workflow.get('description') != workflow_spec['description']:
             if not sync:
                 print('Preserved existing workflow', workflow_spec['name'], '(explicit --sync required)', flush=True)
             elif dry_run:
@@ -487,22 +504,46 @@ def read_dotenv(path):
     return result
 
 
-def export_team(client, workspace_id, output):
-    """Capture portable policy only; never serialize IDs, emails, runtime or tokens."""
-    workspaces = client.listing('/api/workspaces')
-    selected = [w for w in workspaces if w['id'] == workspace_id] if workspace_id else workspaces
-    if len(selected) != 1:
-        raise SetupError('Select one workspace explicitly with --workspace-id (or MULTICA_WORKSPACE_ID)')
-    client.workspace = selected[0]['id']
-    agents = client.listing('/api/agents')
-    squads = client.listing('/api/squads')
-    skills = client.listing('/api/skills')
-    runtimes = {item['id']: provider_name(item.get('provider', '')) for item in client.listing('/api/runtimes')}
-    statuses = client.listing('/api/issue-statuses')
-    workflows = client.listing('/api/issue-workflows')
-    projects = client.listing('/api/projects')
+def cli_json(workspace_id, *args):
+    """Use the installed CLI for exports: its read contract is version-matched."""
+    binary = os.environ.get('MULTICA_CLI_PATH', 'multica')
+    command = [binary, '--workspace-id', workspace_id, *args, '--output', 'json']
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise SetupError('Installed multica CLI could not read export data')
+    try:
+        return json.loads(result.stdout)
+    except ValueError:
+        raise SetupError('Installed multica CLI returned invalid export JSON') from None
+
+
+def export_team(workspace_id, output):
+    """Capture exactly one project's portable policy via verified CLI read paths."""
+    if not workspace_id:
+        raise SetupError('export requires --workspace-id to avoid an accidental workspace selection')
+    projects = cli_json(workspace_id, 'project', 'list')
+    if not isinstance(projects, list) or len(projects) != 1:
+        raise SetupError('export requires exactly one project; select a workspace with one project')
+    project = projects[0]
+    workflow = cli_json(workspace_id, 'workflow', 'get', project['workflow_id'])
+    resources = cli_json(workspace_id, 'project', 'resource', 'list', project['id'])
+    repositories = [r for r in resources if r.get('resource_type') == 'github_repo']
+    if len(repositories) != 1:
+        raise SetupError('export requires exactly one GitHub repository resource')
+    reference = repositories[0].get('resource_ref', {})
+    squads = cli_json(workspace_id, 'squad', 'list')
+    if not isinstance(squads, list) or len(squads) != 1:
+        raise SetupError('export requires exactly one squad')
+    squad = cli_json(workspace_id, 'squad', 'get', squads[0]['id'])
+    members = cli_json(workspace_id, 'squad', 'member', 'list', squad['id'])
+    agents = cli_json(workspace_id, 'agent', 'list')
+    skills = cli_json(workspace_id, 'skill', 'list')
+    runtimes = {item['id']: provider_name(item.get('provider', ''))
+                for item in cli_json(workspace_id, 'runtime', 'list')}
+    statuses = cli_json(workspace_id, 'issue-status', 'list')
     names = {item['id']: item['name'] for item in agents}
-    squad_names = {item['id']: item['name'] for item in squads}
+    squad_names = {squad['id']: squad['name']}
+    roles = {member.get('member_id'): member.get('role', 'member') for member in members}
     exported_agents = []
     for item in agents:
         exported_agents.append({key: item.get(key, '') for key in ('name', 'description', 'instructions', 'max_concurrent_tasks')})
@@ -510,12 +551,10 @@ def export_team(client, workspace_id, output):
         if not provider:
             raise SetupError(f"Agent {item.get('name', '<unknown>')} has no exportable runtime provider")
         exported_agents[-1]['provider'] = provider
-        exported_agents[-1]['squad_leader'] = item.get('name') == 'Lore'
-    delivery = next((item for item in workflows if item.get('name') == 'Lona Delivery'), None)
-    if not delivery:
-        raise SetupError('Lona Delivery workflow was not found')
+        exported_agents[-1]['squad_leader'] = item.get('id') == squad.get('leader_id')
+        exported_agents[-1]['squad_role'] = roles.get(item.get('id'), 'member')
     steps = []
-    for step in delivery.get('steps', []):
+    for step in workflow.get('steps', []):
         handler = step.get('handler', {'type': 'none'})
         portable = {'type': handler.get('type', 'none')}
         if portable['type'] == 'agent':
@@ -528,16 +567,14 @@ def export_team(client, workspace_id, output):
         for key in ('next_status_key', 'back_status_key'):
             if step.get(key): item[key] = step[key]
         steps.append(item)
-    project = next((item for item in projects if item.get('title') == 'lona'), None)
-    if not project:
-        raise SetupError('lona project was not found')
     custom = [item for item in statuses if not item.get('is_system')]
-    result = {'schema_version': 2, 'squad': next(({key: s.get(key, '') for key in ('name', 'description', 'instructions')} for s in squads if s.get('name') == 'Build Team'), {}),
+    result = {'schema_version': 2, 'squad': {key: squad.get(key, '') for key in ('name', 'description', 'instructions')},
               'agents': exported_agents,
-              'skills': [{key: client.detail('skills', s['id']).get(key, '') for key in ('name', 'description', 'content')} for s in skills],
+              'skills': [{**{key: cli_json(workspace_id, 'skill', 'get', s['id'], '--with-content').get(key, '') for key in ('name', 'description', 'content')},
+                          'agents': [agent['name'] for agent in agents if any(skill.get('name') == s.get('name') for skill in agent.get('skills', []))]} for s in skills],
               'statuses': [{key: s.get(key, '') for key in ('key', 'name', 'description', 'category', 'color', 'icon')} for s in custom],
-              'workflow': {'name': delivery['name'], 'description': delivery.get('description', ''), 'steps': steps},
-              'project': {'title': project['title'], 'description': project.get('description', ''), 'workflow': delivery['name'], 'repo': 'https://github.com/duthaho/lona', 'ref': 'main'}}
+              'workflow': {'name': workflow['name'], 'description': workflow.get('description', ''), 'steps': steps},
+              'project': {'title': project['title'], 'description': project.get('description', ''), 'workflow': workflow['name'], 'repo': reference.get('url', ''), 'ref': reference.get('ref', '')}}
     safe_export(result)
     output.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
     print('Exported portable team manifest to', output, flush=True)
@@ -564,6 +601,11 @@ def main():
         port = os.environ.get('MULTICA_BACKEND_PORT') or dotenv.get('MULTICA_BACKEND_PORT') or '8083'
         if not port.isdecimal() or not 1 <= int(port) <= 65535:
             raise SetupError('MULTICA_BACKEND_PORT must be a valid port')
+        if args.command == 'export':
+            if not args.output:
+                raise SetupError('export requires --output')
+            export_team(args.workspace_id, args.output)
+            return 0
         token = os.environ.get('MULTICA_API_TOKEN', '')
         if not token and sys.stdin.isatty():
             import getpass
@@ -572,11 +614,6 @@ def main():
             raise SetupError('MULTICA_API_TOKEN is required; no token is read from command arguments')
         client = Client('http://127.0.0.1:' + port, token, args.timeout)
         client.request('GET', '/api/config')
-        if args.command == 'export':
-            if not args.output:
-                raise SetupError('export requires --output')
-            export_team(client, args.workspace_id, args.output)
-            return 0
         team = validate_team(json.loads(args.team.read_text()))
         runtime_overrides = {}
         for selection in args.runtime:
