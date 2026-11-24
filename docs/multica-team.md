@@ -9,7 +9,7 @@ fallback to a replace-all API. See [deployment operations](../config/multica/DEP
 
 ## Why eight agents, not a larger organization
 
-Keep Phương-CTO, Đông-SA, Forge, Canvas, Vessel, Hoàng-Security, Diễm-QA and Trung-PM, the
+Keep Phương-CTO, Đông-SA, Quốc-BE, Hiếu-FE, Đà-DevOps, Hoàng-Security, Diễm-QA and Trung-PM, the
 reviewer who owns `code_review` and `spec_review` so the leader never reviews. Assign clear tasks
 directly to a capable specialist; use a squad only where routing/coordination adds
 value. Anthropic's multi-agent guidance emphasizes explicit objectives, output,
@@ -65,7 +65,7 @@ all relevant constraints must be included in the issue/handoff.
 
 A separate, direct assignment outside leader mode can authorize Phương-CTO to implement
 or independently review. Phương-CTO-authored work always needs a qualified peer or
-human; no self-approval. Forge/Canvas/Vessel review their respective technical
+human; no self-approval. Quốc-BE/Hiếu-FE/Đà-DevOps review their respective technical
 areas, Đông-SA reviews contracts, Hoàng-Security security, Diễm-QA independently executes
 acceptance. Cross-provider review is useful, not proof of independence. A quiet
 leader records `no_action` through the injected protocol and avoids redundant

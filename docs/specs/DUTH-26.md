@@ -64,7 +64,7 @@ A skip label counts only when such a comment exists and its author is duthaho or
 **`skip-security` eligibility: allowlist, fail-closed.** `skip-security` is valid only when **every** file in `gh pr diff --name-only` matches the allowlist below:
 
 - `docs/**/*.md` and `README.md`
-- other `*.md` files, **except** `SKILL.md`, `SOUL.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` (at any depth), and anything under a dot-directory (`.*/**`, e.g. `.github/`, `.hermes/`, `.claude/`) or `config/**`
+- other `*.md` files, **except** `SKILL.md`, `SOUL.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `HERMES.md`, `*.override.md`, `*.local.md` (at any depth), any path with a segment starting with `.` (dotfiles and dot-directories at any depth, e.g. `docs/.hermes.md`, `.github/`, `.claude/`), and anything under `config/**` or `tests/**`
 
 If any file falls outside the allowlist, or the reviewer is not sure, the label is removed. Comment-only edits in code files (`.py`, `.ts`, …) are code changes and are not eligible. `tests/**` is not eligible either: tests run in CI with the workflow token, so they are a supply-chain path.
 
@@ -72,7 +72,7 @@ The following are never eligible, whatever the file type. They are listed to exp
 
 - **Agent control and policy surfaces:**
   - `config/multica/**`, `config/hermes/**`, `config/openclaw/**` and `.claude/**`
-  - any `SKILL.md`, `SOUL.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or `.cursorrules`
+  - any `SKILL.md`, `SOUL.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `HERMES.md`, `*.override.md`, `*.local.md` or `.cursorrules`, and any dotfile or file under a dot-directory at any depth
   - agent instructions and workflow step text
   - any file that defines agent permissions, tools or model routing
 
