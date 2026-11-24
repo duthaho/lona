@@ -7,9 +7,10 @@ Confirm compatibility with your deployed server before using this internal `/api
 interface. An unexpected response/endpoint fails closed; there is no speculative
 fallback to a replace-all API. See [deployment operations](../config/multica/DEPLOYMENT.md).
 
-## Why seven agents, not a larger organization
+## Why eight agents, not a larger organization
 
-Keep Lore, Atlas, Forge, Canvas, Vessel, Sentinel and Prism. Assign clear tasks
+Keep Lore, Atlas, Forge, Canvas, Vessel, Sentinel, Prism and Trung-PM, the
+reviewer who owns `code_review` and `spec_review` so the leader never reviews. Assign clear tasks
 directly to a capable specialist; use a squad only where routing/coordination adds
 value. Anthropic's multi-agent guidance emphasizes explicit objectives, output,
 resource limits and division of labor, and notes that tightly coupled coding is
@@ -34,6 +35,26 @@ The manifest applies that guidance as conventions:
   destructive actions and new spend. Branch protection, scoped credentials and
   runtime isolation must enforce critical boundaries separately; this PR does
   not install those controls or change access.
+
+## Fast path and spec path
+
+Lona Delivery triages every issue at `todo`. Small, clear work goes straight to
+`in_progress`. An issue goes through `spec → spec_review → plan` first when its
+acceptance criteria are missing or ambiguous, it likely needs more than two
+sub-issues or more than one repo, it touches schema, public API, service
+boundaries, auth, secrets or payments, or it carries the `needs-spec` label
+(`fast-path` skips the gate).
+
+| Step | Handler | Exit |
+|---|---|---|
+| `spec` | Lore | Spec in `docs/specs/<ISSUE-KEY>.md` via its own PR, no open question → `spec_review` |
+| `spec_review` | Trung-PM | APPROVE → `plan`; REQUEST CHANGES → `spec`; a third REQUEST CHANGES → `blocked` |
+| `plan` | Lore, with Atlas/Prism/Sentinel as needed | Requester approves the plan in an issue comment → sub-issues created, `in_progress` |
+
+Trung-PM approves spec quality; only the requester approves the plan. The spec
+template, Definition of Ready and spec checklist live in the
+`lona-delivery-conventions` and `lona-review-checklist` skills. See
+[docs/specs](specs/README.md).
 
 ## Two distinct modes for Lore
 
