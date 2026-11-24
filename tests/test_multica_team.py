@@ -274,26 +274,26 @@ class TeamContractTests(unittest.TestCase):
         first = self.run_seed()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         agents = {a['name']: a for a in self.fixture.resources['agents'].values()}
-        agents['Atlas']['runtime_id'] = 'operator-selected-runtime'
-        agents['Atlas']['model'] = 'operator-selected-model'
+        agents['Đông-SA']['runtime_id'] = 'operator-selected-runtime'
+        agents['Đông-SA']['model'] = 'operator-selected-model'
         path = self.home / 'config/multica/team.json'
         team = json.loads(path.read_text())
-        atlas = next(a for a in team['agents'] if a['name'] == 'Atlas')
+        atlas = next(a for a in team['agents'] if a['name'] == 'Đông-SA')
         atlas['instructions'] += '\nUpdated template policy.'
         path.write_text(json.dumps(team))
-        original = agents['Atlas']['instructions']
+        original = agents['Đông-SA']['instructions']
         seed = self.run_seed()
         self.assertEqual(seed.returncode, 0, seed.stderr)
-        self.assertEqual(agents['Atlas']['instructions'], original)
+        self.assertEqual(agents['Đông-SA']['instructions'], original)
         sync = self.run_seed('--sync')
         self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
-        self.assertEqual(agents['Atlas']['instructions'], atlas['instructions'])
-        self.assertEqual(agents['Atlas']['runtime_id'], 'operator-selected-runtime')
-        self.assertEqual(agents['Atlas']['model'], 'operator-selected-model')
-        agents['Atlas']['instructions'] = 'Human custom instructions'
+        self.assertEqual(agents['Đông-SA']['instructions'], atlas['instructions'])
+        self.assertEqual(agents['Đông-SA']['runtime_id'], 'operator-selected-runtime')
+        self.assertEqual(agents['Đông-SA']['model'], 'operator-selected-model')
+        agents['Đông-SA']['instructions'] = 'Human custom instructions'
         drift = self.run_seed('--sync')
         self.assertNotEqual(drift.returncode, 0, drift.stdout)
-        self.assertEqual(agents['Atlas']['instructions'], 'Human custom instructions')
+        self.assertEqual(agents['Đông-SA']['instructions'], 'Human custom instructions')
 
     def test_ambiguous_runtime_requires_explicit_selection(self):
         self.fixture.runtimes.append({'id': 'rt-other', 'provider': 'claude', 'status': 'online'})
@@ -302,7 +302,7 @@ class TeamContractTests(unittest.TestCase):
         self.assertEqual(self.writes(), [])
         explicit = self.run_seed('--runtime', 'claude=rt-other')
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
-        lore = next(a for a in self.fixture.resources['agents'].values() if a['name'] == 'Lore')
+        lore = next(a for a in self.fixture.resources['agents'].values() if a['name'] == 'Phương-CTO')
         self.assertEqual(lore['runtime_id'], 'rt-other')
 
     def test_workspace_ambiguity_is_read_only_until_explicit_selection(self):
@@ -572,7 +572,7 @@ class TeamContractTests(unittest.TestCase):
     def test_changed_existing_squad_leader_is_preserved_but_fails_acceptance(self):
         self.assertEqual(self.run_seed().returncode, 0)
         squad = next(iter(self.fixture.resources['squads'].values()))
-        other_id = next(a['id'] for a in self.fixture.resources['agents'].values() if a['name'] == 'Atlas')
+        other_id = next(a['id'] for a in self.fixture.resources['agents'].values() if a['name'] == 'Đông-SA')
         squad['leader_id'] = other_id
         result = self.run_seed()
         self.assertNotEqual(result.returncode, 0, result.stdout)
