@@ -332,7 +332,8 @@ def provision(client, team, workspace_id='', *, registry, sync=False, adopt=Fals
         raise SetupError('Select one workspace explicitly with --workspace-id (or MULTICA_WORKSPACE_ID)')
     client.workspace = selected[0]['id']
     print('Workspace:', selected[0].get('name', client.workspace), flush=True)
-    labels = by_name(client.listing('/api/labels'), 'labels')
+    labels = by_name([label for label in client.listing('/api/labels')
+                      if label.get('resource_type') == 'issue'], 'issue labels')
     agents = by_name(client.listing('/api/agents'), 'agents')
     squads = by_name(client.listing('/api/squads'), 'squads')
     skills = by_name(client.listing('/api/skills'), 'skills')

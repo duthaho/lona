@@ -127,7 +127,9 @@ class MulticaFixture:
             if method == 'GET':
                 return 200, list(copy.deepcopy(resources).values())
             if method == 'POST':
-                if kind in ('agents', 'skills', 'labels') and any(x['name'] == body['name'] for x in resources.values()):
+                duplicate = any(x['name'] == body['name'] for x in resources.values()
+                                if kind != 'labels' or x.get('resource_type') == body.get('resource_type'))
+                if kind in ('agents', 'skills', 'labels') and duplicate:
                     return 409, {}
                 self.counter += 1
                 resource_id = f'{kind}-{self.counter}'
@@ -246,6 +248,18 @@ class TeamContractTests(unittest.TestCase):
         second = self.run_seed()
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertEqual(self.writes(), [])
+
+    def test_skill_label_with_the_same_name_does_not_block_issue_label_seed(self):
+        self.fixture.resources['labels']['skill-bug'] = {
+            'id': 'label-skill-bug', 'name': 'bug', 'color': '#000000',
+            'description': 'A skill label', 'resource_type': 'skill',
+        }
+        result = self.run_seed()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        issue_labels = [label for label in self.fixture.resources['labels'].values()
+                        if label['resource_type'] == 'issue']
+        self.assertEqual({label['name'] for label in issue_labels},
+                         {label['name'] for label in json.loads((self.home / 'config/multica/team.json').read_text())['labels']})
 
     def test_duplicate_manifest_agent_is_rejected_before_any_write(self):
         path = self.home / 'config/multica/team.json'
