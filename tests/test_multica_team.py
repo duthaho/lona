@@ -81,6 +81,9 @@ class MulticaFixture:
             return 500, {'error': 'test fault injection', 'sensitive': TOKEN}
         if route == '/api/config':
             return 200, {}
+        if route == '/api/labels' and method == 'GET':
+            return 200, {'labels': list(copy.deepcopy(self.resources['labels']).values()),
+                         'total': len(self.resources['labels'])}
         if route == '/api/workspaces':
             return 200, self.workspaces
         if route == '/api/runtimes':
@@ -91,7 +94,7 @@ class MulticaFixture:
             return 200, {'id': 'member-owner'}
         if route == '/api/issue-statuses':
             if method == 'GET':
-                return 200, copy.deepcopy(self.statuses)
+                return 200, {'statuses': copy.deepcopy(self.statuses), 'total': len(self.statuses)}
             if method == 'POST':
                 status = dict(body, id=f'status-{len(self.statuses) + 1}')
                 self.statuses.append(status)
@@ -261,6 +264,10 @@ class TeamContractTests(unittest.TestCase):
         self.assertEqual({label['name'] for label in issue_labels},
                          {label['name'] for label in json.loads((self.home / 'config/multica/team.json').read_text())['labels']})
 
+    def test_label_list_envelope_is_accepted(self):
+        result = self.run_seed('--dry-run')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_duplicate_manifest_agent_is_rejected_before_any_write(self):
         path = self.home / 'config/multica/team.json'
         team = json.loads(path.read_text())
@@ -328,7 +335,7 @@ class TeamContractTests(unittest.TestCase):
         reads = {path for method, path, _, _ in self.fixture.requests if method == 'GET'}
         self.assertTrue({'/api/agents', '/api/squads', '/api/skills', '/api/runtimes',
                          '/api/issue-statuses', '/api/issue-workflows', '/api/projects',
-                         '/api/users', '/api/me'} <= reads)
+                         '/api/me'} <= reads)
         self.assertEqual(self.writes(), [])
 
     def test_v2_validation_rejects_unknown_status(self):

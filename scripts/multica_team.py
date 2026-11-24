@@ -59,6 +59,11 @@ class Client:
 
     def listing(self, path):
         result = self.request('GET', path)
+        if isinstance(result, dict):
+            collections = [value for value in result.values()
+                           if isinstance(value, list) and all(isinstance(item, dict) and item.get('id') for item in value)]
+            if len(collections) == 1:
+                result = collections[0]
         if not isinstance(result, list) or any(not isinstance(x, dict) or not x.get('id') for x in result):
             raise SetupError(f'GET {path}: expected an array of resources with IDs')
         return result
@@ -202,8 +207,8 @@ def resolve_handler(client, handler, agents, squads):
     if kind == 'squad':
         return {'type': 'squad', 'id': squads[handler['name']]['id']}
     reviewer = os.environ.get('MULTICA_REVIEWER_EMAIL', '').strip()
-    people = client.listing('/api/users')
     if reviewer:
+        people = client.listing('/api/users')
         matches = [person for person in people if person.get('email') == reviewer]
         if len(matches) != 1:
             raise SetupError('MULTICA_REVIEWER_EMAIL did not resolve to exactly one workspace member')
@@ -633,7 +638,7 @@ def main():
                 raise SetupError('export requires --output')
             export_team(args.workspace_id, args.output)
             return 0
-        token = os.environ.get('MULTICA_API_TOKEN', '')
+        token = os.environ.get('MULTICA_API_TOKEN', '') or os.environ.get('MULTICA_TOKEN', '')
         if not token and sys.stdin.isatty():
             import getpass
             token = getpass.getpass('Multica API token (Settings → Personal → API Tokens): ')
