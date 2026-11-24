@@ -9,7 +9,7 @@ fallback to a replace-all API. See [deployment operations](../config/multica/DEP
 
 ## Why eight agents, not a larger organization
 
-Keep Lore, Atlas, Forge, Canvas, Vessel, Sentinel, Prism and Trung-PM, the
+Keep Phương-CTO, Đông-SA, Forge, Canvas, Vessel, Hoàng-Security, Diễm-QA and Trung-PM, the
 reviewer who owns `code_review` and `spec_review` so the leader never reviews. Assign clear tasks
 directly to a capable specialist; use a squad only where routing/coordination adds
 value. Anthropic's multi-agent guidance emphasizes explicit objectives, output,
@@ -47,26 +47,26 @@ boundaries, auth, secrets or payments, or it carries the `needs-spec` label
 
 | Step | Handler | Exit |
 |---|---|---|
-| `spec` | Lore | Spec in `docs/specs/<ISSUE-KEY>.md` via its own PR, no open question → `spec_review` |
+| `spec` | Phương-CTO | Spec in `docs/specs/<ISSUE-KEY>.md` via its own PR, no open question → `spec_review` |
 | `spec_review` | Trung-PM | APPROVE → `plan`; REQUEST CHANGES → `spec`; a third REQUEST CHANGES → `blocked` |
-| `plan` | Lore, with Atlas/Prism/Sentinel as needed | Requester approves the plan in an issue comment → sub-issues created, `in_progress` |
+| `plan` | Phương-CTO, with Đông-SA/Diễm-QA/Hoàng-Security as needed | Requester approves the plan in an issue comment → sub-issues created, `in_progress` |
 
 Trung-PM approves spec quality; only the requester approves the plan. The spec
 template, Definition of Ready and spec checklist live in the
 `lona-delivery-conventions` and `lona-review-checklist` skills. See
 [docs/specs](specs/README.md).
 
-## Two distinct modes for Lore
+## Two distinct modes for Phương-CTO
 
-Multica injects a **coordinator-only** protocol into squad-leader turns [3]. Lore
+Multica injects a **coordinator-only** protocol into squad-leader turns [3]. Phương-CTO
 must delegate implementation **and review**, record the required squad activity,
 then stop. Leader-only custom squad instructions are not visible to members, so
 all relevant constraints must be included in the issue/handoff.
 
-A separate, direct assignment outside leader mode can authorize Lore to implement
-or independently review. Lore-authored work always needs a qualified peer or
+A separate, direct assignment outside leader mode can authorize Phương-CTO to implement
+or independently review. Phương-CTO-authored work always needs a qualified peer or
 human; no self-approval. Forge/Canvas/Vessel review their respective technical
-areas, Atlas reviews contracts, Sentinel security, Prism independently executes
+areas, Đông-SA reviews contracts, Hoàng-Security security, Diễm-QA independently executes
 acceptance. Cross-provider review is useful, not proof of independence. A quiet
 leader records `no_action` through the injected protocol and avoids redundant
 comments or mention-trigger loops.
