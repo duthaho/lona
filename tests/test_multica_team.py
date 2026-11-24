@@ -23,7 +23,7 @@ class MulticaFixture:
             {'id': 'rt-claude', 'provider': 'claude', 'status': 'online'},
             {'id': 'rt-codex', 'provider': 'codex', 'status': 'online'},
         ]
-        self.resources = {'agents': {}, 'squads': {}, 'skills': {}}
+        self.resources = {'agents': {}, 'squads': {}, 'skills': {}, 'labels': {}}
         self.statuses = []
         self.workflows = {}
         self.projects = {}
@@ -81,6 +81,9 @@ class MulticaFixture:
             return 500, {'error': 'test fault injection', 'sensitive': TOKEN}
         if route == '/api/config':
             return 200, {}
+        if route == '/api/labels' and method == 'GET':
+            return 200, {'labels': list(copy.deepcopy(self.resources['labels']).values()),
+                         'total': len(self.resources['labels'])}
         if route == '/api/workspaces':
             return 200, self.workspaces
         if route == '/api/runtimes':
@@ -91,7 +94,7 @@ class MulticaFixture:
             return 200, {'id': 'member-owner'}
         if route == '/api/issue-statuses':
             if method == 'GET':
-                return 200, copy.deepcopy(self.statuses)
+                return 200, {'statuses': copy.deepcopy(self.statuses), 'total': len(self.statuses)}
             if method == 'POST':
                 status = dict(body, id=f'status-{len(self.statuses) + 1}')
                 self.statuses.append(status)
@@ -127,7 +130,9 @@ class MulticaFixture:
             if method == 'GET':
                 return 200, list(copy.deepcopy(resources).values())
             if method == 'POST':
-                if kind in ('agents', 'skills') and any(x['name'] == body['name'] for x in resources.values()):
+                duplicate = any(x['name'] == body['name'] for x in resources.values()
+                                if kind != 'labels' or x.get('resource_type') == body.get('resource_type'))
+                if kind in ('agents', 'skills', 'labels') and duplicate:
                     return 409, {}
                 self.counter += 1
                 resource_id = f'{kind}-{self.counter}'
@@ -226,6 +231,43 @@ class TeamContractTests(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertEqual(self.writes(), [], 'Repeated setup must be idempotent')
 
+    def test_missing_labels_are_created_without_overwriting_existing_labels(self):
+        self.fixture.resources['labels']['existing'] = {
+            'id': 'label-existing', 'name': 'bug', 'color': '#000000',
+            'description': 'Workspace customization', 'resource_type': 'issue',
+        }
+        result = self.run_seed()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        manifest = json.loads((self.home / 'config/multica/team.json').read_text())
+        expected = {label['name'] for label in manifest['labels']}
+        actual = {label['name'] for label in self.fixture.resources['labels'].values()}
+        self.assertEqual(actual, expected)
+        existing = self.fixture.resources['labels']['existing']
+        self.assertEqual(existing['color'], '#000000')
+        self.assertEqual(existing['description'], 'Workspace customization')
+        writes = [request for request in self.writes() if request[1] == '/api/labels']
+        self.assertEqual(len(writes), len(expected) - 1)
+        self.fixture.requests.clear()
+        second = self.run_seed()
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual(self.writes(), [])
+
+    def test_skill_label_with_the_same_name_does_not_block_issue_label_seed(self):
+        self.fixture.resources['labels']['skill-bug'] = {
+            'id': 'label-skill-bug', 'name': 'bug', 'color': '#000000',
+            'description': 'A skill label', 'resource_type': 'skill',
+        }
+        result = self.run_seed()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        issue_labels = [label for label in self.fixture.resources['labels'].values()
+                        if label['resource_type'] == 'issue']
+        self.assertEqual({label['name'] for label in issue_labels},
+                         {label['name'] for label in json.loads((self.home / 'config/multica/team.json').read_text())['labels']})
+
+    def test_label_list_envelope_is_accepted(self):
+        result = self.run_seed('--dry-run')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_duplicate_manifest_agent_is_rejected_before_any_write(self):
         path = self.home / 'config/multica/team.json'
         team = json.loads(path.read_text())
@@ -239,26 +281,26 @@ class TeamContractTests(unittest.TestCase):
         first = self.run_seed()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         agents = {a['name']: a for a in self.fixture.resources['agents'].values()}
-        agents['Atlas']['runtime_id'] = 'operator-selected-runtime'
-        agents['Atlas']['model'] = 'operator-selected-model'
+        agents['Đông-SA']['runtime_id'] = 'operator-selected-runtime'
+        agents['Đông-SA']['model'] = 'operator-selected-model'
         path = self.home / 'config/multica/team.json'
         team = json.loads(path.read_text())
-        atlas = next(a for a in team['agents'] if a['name'] == 'Atlas')
+        atlas = next(a for a in team['agents'] if a['name'] == 'Đông-SA')
         atlas['instructions'] += '\nUpdated template policy.'
         path.write_text(json.dumps(team))
-        original = agents['Atlas']['instructions']
+        original = agents['Đông-SA']['instructions']
         seed = self.run_seed()
         self.assertEqual(seed.returncode, 0, seed.stderr)
-        self.assertEqual(agents['Atlas']['instructions'], original)
+        self.assertEqual(agents['Đông-SA']['instructions'], original)
         sync = self.run_seed('--sync')
         self.assertEqual(sync.returncode, 0, sync.stdout + sync.stderr)
-        self.assertEqual(agents['Atlas']['instructions'], atlas['instructions'])
-        self.assertEqual(agents['Atlas']['runtime_id'], 'operator-selected-runtime')
-        self.assertEqual(agents['Atlas']['model'], 'operator-selected-model')
-        agents['Atlas']['instructions'] = 'Human custom instructions'
+        self.assertEqual(agents['Đông-SA']['instructions'], atlas['instructions'])
+        self.assertEqual(agents['Đông-SA']['runtime_id'], 'operator-selected-runtime')
+        self.assertEqual(agents['Đông-SA']['model'], 'operator-selected-model')
+        agents['Đông-SA']['instructions'] = 'Human custom instructions'
         drift = self.run_seed('--sync')
         self.assertNotEqual(drift.returncode, 0, drift.stdout)
-        self.assertEqual(agents['Atlas']['instructions'], 'Human custom instructions')
+        self.assertEqual(agents['Đông-SA']['instructions'], 'Human custom instructions')
 
     def test_ambiguous_runtime_requires_explicit_selection(self):
         self.fixture.runtimes.append({'id': 'rt-other', 'provider': 'claude', 'status': 'online'})
@@ -267,7 +309,7 @@ class TeamContractTests(unittest.TestCase):
         self.assertEqual(self.writes(), [])
         explicit = self.run_seed('--runtime', 'claude=rt-other')
         self.assertEqual(explicit.returncode, 0, explicit.stdout + explicit.stderr)
-        lore = next(a for a in self.fixture.resources['agents'].values() if a['name'] == 'Lore')
+        lore = next(a for a in self.fixture.resources['agents'].values() if a['name'] == 'Phương-CTO')
         self.assertEqual(lore['runtime_id'], 'rt-other')
 
     def test_workspace_ambiguity_is_read_only_until_explicit_selection(self):
@@ -293,7 +335,7 @@ class TeamContractTests(unittest.TestCase):
         reads = {path for method, path, _, _ in self.fixture.requests if method == 'GET'}
         self.assertTrue({'/api/agents', '/api/squads', '/api/skills', '/api/runtimes',
                          '/api/issue-statuses', '/api/issue-workflows', '/api/projects',
-                         '/api/users', '/api/me'} <= reads)
+                         '/api/me'} <= reads)
         self.assertEqual(self.writes(), [])
 
     def test_v2_validation_rejects_unknown_status(self):
@@ -464,7 +506,8 @@ class TeamContractTests(unittest.TestCase):
         self.assertIn('disabled', result.stderr)
 
     def test_squad_create_with_failed_readback_never_claims_empty_policy_verified(self):
-        self.fixture.fail_once.add(('GET', f'/api/squads/squads-{len(self.manifest_agents()) + 1}'))
+        label_count = len(json.loads((self.home / 'config/multica/team.json').read_text())['labels'])
+        self.fixture.fail_once.add(('GET', f'/api/squads/squads-{label_count + len(self.manifest_agents()) + 1}'))
         first = self.run_seed()
         self.assertNotEqual(first.returncode, 0)
         retry = self.run_seed()
@@ -536,7 +579,7 @@ class TeamContractTests(unittest.TestCase):
     def test_changed_existing_squad_leader_is_preserved_but_fails_acceptance(self):
         self.assertEqual(self.run_seed().returncode, 0)
         squad = next(iter(self.fixture.resources['squads'].values()))
-        other_id = next(a['id'] for a in self.fixture.resources['agents'].values() if a['name'] == 'Atlas')
+        other_id = next(a['id'] for a in self.fixture.resources['agents'].values() if a['name'] == 'Đông-SA')
         squad['leader_id'] = other_id
         result = self.run_seed()
         self.assertNotEqual(result.returncode, 0, result.stdout)
