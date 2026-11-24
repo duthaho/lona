@@ -55,19 +55,18 @@ Colors are a proposal. The implementer may adjust them, but the names are fixed.
 **Authorization comment (required).** Label changes have no ACL and are not in the issue timeline. So whoever adds a skip label must also post a comment on the issue in this form:
 
 ```
-skip-security: <reason>; head <sha>
-skip-qa: <reason>; head <sha>
+skip-security: <reason>; head <sha|n/a>
+skip-qa: <reason>; head <sha|n/a>
 ```
 
-A skip label counts only when such a comment exists and its author is duthaho or Phương-CTO. Without it, Trung-PM removes the label and routes normally.
+A skip label counts only when such a comment exists and its author is duthaho or Phương-CTO. Without it, Trung-PM removes the label and routes normally. Use `n/a` when the label is added at triage, before a PR exists. The binding SHA is the one in Trung-PM's verdict (AC10).
 
 **`skip-security` eligibility: allowlist, fail-closed.** `skip-security` is valid only when **every** file in `gh pr diff --name-only` matches the allowlist below:
 
 - `docs/**/*.md` and `README.md`
-- other `*.md` files, **except** `SKILL.md`, `SOUL.md`, and anything under `.claude/**` or `config/**`
-- `tests/**`, as long as no fixture contains credentials or credential-shaped values
+- other `*.md` files, **except** `SKILL.md`, `SOUL.md`, and anything under a dot-directory (`.*/**`, e.g. `.github/`, `.hermes/`, `.claude/`) or `config/**`
 
-If any file falls outside the allowlist, or the reviewer is not sure, the label is removed. Comment-only edits in code files (`.py`, `.ts`, …) are code changes and are not eligible.
+If any file falls outside the allowlist, or the reviewer is not sure, the label is removed. Comment-only edits in code files (`.py`, `.ts`, …) are code changes and are not eligible. `tests/**` is not eligible either: tests run in CI with the workflow token, so they are a supply-chain path.
 
 The following are never eligible, whatever the file type. They are listed to explain the allowlist; the allowlist is what decides:
 
@@ -102,7 +101,7 @@ Trung-PM checks this against `gh pr diff --name-only`.
 
 **Typical eligible cases:**
 
-- `skip-security`: docs-only and test-only changes.
+- `skip-security`: docs-only changes.
 - `skip-qa`: docs-only changes, Multica workflow or skill text, and test-only changes. Tests must still be green at code review.
 
 **Checked SHA, so later commits are not missed.** Trung-PM's verdict records the PR head SHA at which the skip labels were checked. A skip label is valid only for that SHA. If any commit is pushed after it, the skip lapses and the issue goes back to `code_review`. Before merging, the merger compares the PR head with the SHA in the verdict.
@@ -129,8 +128,6 @@ Trung-PM checks this against `gh pr diff --name-only`.
   - the authorization comment's author is not duthaho or Phương-CTO,
 
   when Trung-PM reviews it, then Trung-PM removes the label, states why in the verdict, and routes to `security_review`. The same applies to `skip-qa` and `qa`.
-- AC10: Given an issue with a skip label and a commit pushed after the SHA recorded in Trung-PM's verdict, when the issue reaches the next step or merge, then it is routed back to `code_review`.
-- AC11: Given an issue that reaches `in_review` with a skipped step, when the hand-off comment is posted, then it states which step was skipped, who added the label, and the checked SHA.
 - AC7: Given the live Lona Delivery workflow, when `multica workflow get "Lona Delivery"` runs, then the `code_review` and `security_review` step instructions contain the routing rules above. The `todo` (and `plan`) instructions state who may add skip labels and when.
 - AC8: Given the live agents, when `multica agent get` runs for Trung-PM, Hoàng-Security and Diễm-QA, then:
   - Trung-PM's instructions allow removing an invalid skip label and routing by skip labels after APPROVE (no hard-coded "APPROVE → `security_review`" left, no "do not route issues" conflict).
@@ -139,6 +136,8 @@ Trung-PM checks this against `gh pr diff --name-only`.
   - Diễm-QA's instructions do not conflict with the skip rules.
   - The live instructions match `agents[].instructions` in `config/multica/team.json`.
 - AC9: Given the repo, when the implementation PR is merged, then the `lona-delivery-conventions` content matches in three places: `skills[]` in `config/multica/team.json`, the workspace skill (`multica skill get lona-delivery-conventions --with-content`), and the workflow steps in `team.json` match `multica workflow get "Lona Delivery"`.
+- AC10: Given an issue with a skip label and a commit pushed after the SHA recorded in Trung-PM's verdict, when the issue reaches the next step or merge, then it is routed back to `code_review`.
+- AC11: Given an issue that reaches `in_review` with a skipped step, when the hand-off comment is posted, then it states which step was skipped, who added the label, and the checked SHA.
 
 ## Constraints
 
@@ -158,6 +157,7 @@ Trung-PM checks this against `gh pr diff --name-only`.
   - an authorization comment from duthaho or Phương-CTO;
   - a re-check by Trung-PM against the diff, recorded with the head SHA (AC6, AC10);
   - an explicit skipped-step note at human acceptance (AC11).
+- **Residual risk, needs duthaho's acceptance:** if Phương-CTO itself is prompt-injected, it can still write a valid authorization comment. Trung-PM's allowlist re-check and the skipped-step note at `in_review` (AC11) limit this, but do not remove it.
 - **Instructions are routing logic and agents may not follow them.** Mitigation: explicit, ordered routing rules in the step text, plus AC3–AC5 verified on a real test issue during QA.
 - **The live workflow and `team.json` drift apart.** Mitigation: AC8 and AC9, and the PR exports the live workflow after the update.
 
@@ -169,7 +169,53 @@ Trung-PM checks this against `gh pr diff --name-only`.
 
 **Rollout:**
 
-1. Merge this spec. At `plan`, Hoàng-Security's review (round 1: REQUEST CHANGES, comment on DUTH-26) is applied in this revision:
+1. Hoàng-Security approves the `skip-security` rules at `plan` (see Threat model), duthaho approves the plan, then this spec is merged.
+2. Implementation PR: label seeding in `multica_team.py` with tests, the label declarations, the updated workflow step text, the updated `agents[].instructions` of Trung-PM, Hoàng-Security and Diễm-QA, and the updated `lona-delivery-conventions` in `team.json`.
+3. After approval, run the team setup script to create the labels, then apply the step instructions with `multica workflow handoff set`, and update the agent instructions of Trung-PM, Hoàng-Security and Diễm-QA with `multica agent update`.
+4. Verify AC1, AC3–AC6, AC10 and AC11 on test issues (see Test plan).
+
+**Rollback:** from the `main` version of `team.json`, restore the previous step instructions with `multica workflow handoff set` and the previous agent instructions with `multica agent update`, and remove the skip labels from any open issues. Labels can stay; without the instructions they have no effect.
+
+## Plan
+
+### Design summary
+
+There is no schema, public API or service-boundary change, so no separate design from Đông-SA is needed.
+
+- **`config/multica/team.json`:**
+  - Add a top-level `labels` array (`name`, `color`, `description`) with the 11 labels.
+  - Update the `todo`, `plan`, `code_review` and `security_review` step instructions.
+  - Update `agents[].instructions` of Trung-PM, Hoàng-Security and Diễm-QA.
+  - Update the `lona-delivery-conventions` skill content.
+- **`scripts/multica_team.py`:** seed labels with the same create-missing-only policy as the other assets:
+  - list workspace labels;
+  - create the missing names;
+  - never update or delete existing labels.
+- **Live apply** (handler, after code review APPROVE and before QA):
+  - `./deploy.sh multica team-setup` creates the labels;
+  - `multica workflow handoff set` applies the step text;
+  - `multica agent update --instructions` applies the agent text;
+  - the skill is updated on the workspace.
+  - The applied state is then exported back into `team.json` on the same PR, so live and repo match (AC8, AC9).
+
+### Test plan
+
+| AC | How it is verified | By |
+|---|---|---|
+| AC1 | `multica label list --output json` contains the 11 names, with colors and descriptions matching `team.json` | Diễm-QA |
+| AC2 | Unit tests in `tests/test_multica_team.py`: missing labels created; existing labels with edited color/description untouched; second run makes no API writes | implementer; Diễm-QA reruns `python3 -m pytest tests/test_multica_team.py` and `bash tests/multica_team_test.sh` |
+| AC3–AC5 | Three throwaway test issues with docs-only PRs, labelled `skip-security` / both / `skip-qa`. Confirm the status transitions and that no Hoàng-Security / Diễm-QA run is started where skipped | Diễm-QA |
+| AC6 (paths) | Test issue labelled `skip-security` whose PR touches a Dockerfile, one touching `config/multica/team.json`, and one touching `.github/pull_request_template.md`: Trung-PM removes the label and routes to `security_review` | Diễm-QA |
+| AC6 (auth) | Test issue labelled `skip-security` with no authorization comment, and one where the comment comes from a non-allowed author: the label is removed in both cases | Diễm-QA |
+| AC7–AC9 | Diff `multica workflow get`, `multica agent get` and `multica skill get --with-content` output against `team.json` | Diễm-QA |
+| AC10 | Push a commit to a test PR after code review: the issue goes back to `code_review` | Diễm-QA |
+| AC11 | The `in_review` hand-off comment on the skip test issues contains the skipped step, who added the label, and the checked SHA | Diễm-QA |
+
+Test issues and PRs are closed and cancelled after QA.
+
+### Threat model
+
+Hoàng-Security's review (round 1: REQUEST CHANGES, comment on DUTH-26) is applied in this revision:
 
 - **H1, agent control surfaces were eligible:** removed. `config/**`, `.claude/**`, `SKILL.md`/`SOUL.md` and agent or workflow text are never eligible for `skip-security`.
 - **H2, denylist replaced by allowlist:** `skip-security` now uses a fail-closed path allowlist. The denylist stays only as explanation, and issues labelled `security` or `infra` can never skip.
@@ -178,8 +224,9 @@ Trung-PM checks this against `gh pr diff --name-only`.
 - **M1, comment-only code edits:** no longer eligible.
 - **M2, overlap with DUTH-27:** no auto-merge for `skip-security` issues (Constraints), and a skipped-step note is required at `in_review` (AC11).
 - **Recommendation, not blocking:** a weekly post-hoc audit of merged `skip-security` PRs. Carried to DUTH-27.
+- **Round 2 (REQUEST CHANGES):** B1 restored the deleted Rollout, Rollback, Design, Test plan and Threat model sections. B2 set the sub-issue ACs to AC1–AC11. M3 excluded `.md` files under dot-directories. M4 removed `tests/**` from the `skip-security` allowlist. The two nits are applied in the rules and Risks.
 
-Trade-off: `skip-security` now only saves runs on docs-only and test-only changes. Workflow and skill text changes still skip QA but not security.
+Trade-off: `skip-security` now only saves runs on docs-only changes. Workflow and skill text changes still skip QA but not security.
 
 ### Sub-issues
 
@@ -189,7 +236,7 @@ One implementation issue: all changes ship in one PR and are verified end to end
 
 - **Handler:** Đà-DevOps (Multica config and team setup script; same owner as DUTH-7).
 - **Goal:** G1–G4.
-- **Acceptance criteria:** AC1–AC9 of this spec.
+- **Acceptance criteria:** AC1–AC11 of this spec.
 - **Dependencies:**
   - PR #26 (DUTH-18) must be merged first: the branch is based on `main` after #26.
   - This spec PR (#27) must be merged.
