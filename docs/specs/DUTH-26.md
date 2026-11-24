@@ -105,7 +105,7 @@ Colors are a proposal. The implementer may adjust them, but the names are fixed.
 
 - **A skip label is misapplied and a risky change misses security or QA.** Mitigation: a narrow eligibility list, only the requester or Phương-CTO may add the labels, and Trung-PM re-checks against the diff and removes invalid labels (AC6). Human acceptance is still required.
 - **Instructions are routing logic and agents may not follow them.** Mitigation: explicit, ordered routing rules in the step text, plus AC3–AC5 verified on a real test issue during QA.
-- **The live workflow and `team.json` drift apart.** Mitigation: AC8, and the PR exports the live workflow after the update.
+- **The live workflow and `team.json` drift apart.** Mitigation: AC8 and AC9, and the PR exports the live workflow after the update.
 
 ## Open questions
 
@@ -116,12 +116,60 @@ Colors are a proposal. The implementer may adjust them, but the names are fixed.
 **Rollout:**
 
 1. Merge this spec. At `plan`, Hoàng-Security reviews the `skip-security` ineligible list.
-2. Implementation PR: label seeding in `multica_team.py` with tests, the label declarations, the updated workflow step text, and the updated `lona-delivery-conventions` in `team.json`.
+2. Implementation PR: label seeding in `multica_team.py` with tests, the label declarations, the updated workflow step text, the updated `agents[].instructions` of Trung-PM, Hoàng-Security and Diễm-QA, and the updated `lona-delivery-conventions` in `team.json`.
 3. After approval, run the team setup script to create the labels, then apply the step instructions with `multica workflow handoff set`, and update the agent instructions of Trung-PM, Hoàng-Security and Diễm-QA with `multica agent update`.
 4. Verify AC1, AC3–AC5 on a test issue.
 
-**Rollback:** restore the previous step instructions and agent instructions with `multica workflow handoff set` from the `main` version of `team.json`, and remove the skip labels from any open issues. Labels can stay; without the instructions they have no effect.
+**Rollback:** from the `main` version of `team.json`, restore the previous step instructions with `multica workflow handoff set` and the previous agent instructions with `multica agent update`, and remove the skip labels from any open issues. Labels can stay; without the instructions they have no effect.
 
 ## Plan
 
-(added at the `plan` step)
+### Design summary
+
+There is no schema, public API or service-boundary change, so no separate design from Đông-SA is needed.
+
+- **`config/multica/team.json`:**
+  - Add a top-level `labels` array (`name`, `color`, `description`) with the 11 labels.
+  - Update the `todo`, `plan`, `code_review` and `security_review` step instructions.
+  - Update `agents[].instructions` of Trung-PM, Hoàng-Security and Diễm-QA.
+  - Update the `lona-delivery-conventions` skill content.
+- **`scripts/multica_team.py`:** seed labels with the same create-missing-only policy as the other assets:
+  - list workspace labels;
+  - create the missing names;
+  - never update or delete existing labels.
+- **Live apply** (handler, after code review APPROVE and before QA):
+  - `./deploy.sh multica team-setup` creates the labels;
+  - `multica workflow handoff set` applies the step text;
+  - `multica agent update --instructions` applies the agent text;
+  - the skill is updated on the workspace.
+  - The applied state is then exported back into `team.json` on the same PR, so live and repo match (AC8, AC9).
+
+### Test plan
+
+| AC | How it is verified | By |
+|---|---|---|
+| AC1 | `multica label list --output json` contains the 11 names, with colors and descriptions matching `team.json` | Diễm-QA |
+| AC2 | Unit tests in `tests/test_multica_team.py`: missing labels created; existing labels with edited color/description untouched; second run makes no API writes | implementer; Diễm-QA reruns `python3 -m pytest tests/test_multica_team.py` and `bash tests/multica_team_test.sh` |
+| AC3–AC5 | Three throwaway test issues with docs-only PRs, labelled `skip-security` / both / `skip-qa`. Confirm the status transitions and that no Hoàng-Security / Diễm-QA run is started where skipped | Diễm-QA |
+| AC6 | Test issue labelled `skip-security` whose PR touches a Dockerfile: Trung-PM removes the label and routes to `security_review` | Diễm-QA |
+| AC7–AC9 | Diff `multica workflow get`, `multica agent get` and `multica skill get --with-content` output against `team.json` | Diễm-QA |
+
+Test issues and PRs are closed and cancelled after QA.
+
+### Threat model
+
+Hoàng-Security reviews the `skip-security` ineligible list during this step. Their verdict, and any changes to the list, are recorded here before the plan goes to the requester.
+
+### Sub-issues
+
+One implementation issue: all changes ship in one PR and are verified end to end together.
+
+**Stage 1, `todo`: Implement workflow labels and skip-review routing**
+
+- **Handler:** Đà-DevOps (Multica config and team setup script; same owner as DUTH-7).
+- **Goal:** G1–G4.
+- **Acceptance criteria:** AC1–AC9 of this spec.
+- **Dependencies:**
+  - PR #26 (DUTH-18) must be merged first: the branch is based on `main` after #26.
+  - This spec PR (#27) must be merged.
+- **Review path:** normal (`code_review → security_review → qa`); no skip labels on this issue itself.
