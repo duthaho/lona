@@ -129,6 +129,19 @@ def validate_team(team):
         assigned = skill.get('agents', [])
         if not isinstance(assigned, list) or any(not isinstance(a, str) or a not in names for a in assigned):
             raise SetupError('Skill references an unknown agent')
+    labels = team.get('labels', [])
+    if not isinstance(labels, list):
+        raise SetupError('Manifest labels must be an array')
+    label_names = set()
+    for label in labels:
+        if not isinstance(label, dict) or any(not isinstance(label.get(k), str) or not label[k].strip()
+                                              for k in ('name', 'color', 'description')):
+            raise SetupError('Every label requires a name, color and description')
+        if not re.fullmatch(r'#[0-9a-fA-F]{6}', label['color']):
+            raise SetupError('Every label color must be a six-digit hex value')
+        if label['name'] in label_names:
+            raise SetupError('Duplicate manifest label name')
+        label_names.add(label['name'])
     if team.get('schema_version', 1) == 1:
         return team
     statuses = team.get('statuses', [])
@@ -319,6 +332,7 @@ def provision(client, team, workspace_id='', *, registry, sync=False, adopt=Fals
         raise SetupError('Select one workspace explicitly with --workspace-id (or MULTICA_WORKSPACE_ID)')
     client.workspace = selected[0]['id']
     print('Workspace:', selected[0].get('name', client.workspace), flush=True)
+    labels = by_name(client.listing('/api/labels'), 'labels')
     agents = by_name(client.listing('/api/agents'), 'agents')
     squads = by_name(client.listing('/api/squads'), 'squads')
     skills = by_name(client.listing('/api/skills'), 'skills')
@@ -368,9 +382,21 @@ def provision(client, team, workspace_id='', *, registry, sync=False, adopt=Fals
             print('Would ensure project', team['project']['title'], flush=True)
         for spec in team['agents']:
             print('Would ensure agent', spec['name'], flush=True)
+        for spec in team.get('labels', []):
+            if spec['name'] not in labels:
+                print('Would create label', spec['name'], flush=True)
         print('Would ensure squad', team['squad']['name'], flush=True)
         print('Dry run complete; 0 API writes.', flush=True)
         return
+
+    for spec in team.get('labels', []):
+        if spec['name'] in labels:
+            continue
+        created = client.request('POST', '/api/labels', {**spec, 'resource_type': 'issue'})
+        if not isinstance(created, dict) or not isinstance(created.get('id'), str) or created.get('name') != spec['name']:
+            raise SetupError('POST labels: readback mismatch')
+        labels[spec['name']] = created
+        print('Created label', spec['name'], flush=True)
 
     def ensure(kind, spec, existing, fields):
         policy_keys = ('description', 'content') if kind == 'skills' else ('description', 'instructions')

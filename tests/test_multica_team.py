@@ -23,7 +23,7 @@ class MulticaFixture:
             {'id': 'rt-claude', 'provider': 'claude', 'status': 'online'},
             {'id': 'rt-codex', 'provider': 'codex', 'status': 'online'},
         ]
-        self.resources = {'agents': {}, 'squads': {}, 'skills': {}}
+        self.resources = {'agents': {}, 'squads': {}, 'skills': {}, 'labels': {}}
         self.statuses = []
         self.workflows = {}
         self.projects = {}
@@ -127,7 +127,7 @@ class MulticaFixture:
             if method == 'GET':
                 return 200, list(copy.deepcopy(resources).values())
             if method == 'POST':
-                if kind in ('agents', 'skills') and any(x['name'] == body['name'] for x in resources.values()):
+                if kind in ('agents', 'skills', 'labels') and any(x['name'] == body['name'] for x in resources.values()):
                     return 409, {}
                 self.counter += 1
                 resource_id = f'{kind}-{self.counter}'
@@ -225,6 +225,27 @@ class TeamContractTests(unittest.TestCase):
         second = self.run_seed()
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertEqual(self.writes(), [], 'Repeated setup must be idempotent')
+
+    def test_missing_labels_are_created_without_overwriting_existing_labels(self):
+        self.fixture.resources['labels']['existing'] = {
+            'id': 'label-existing', 'name': 'bug', 'color': '#000000',
+            'description': 'Workspace customization', 'resource_type': 'issue',
+        }
+        result = self.run_seed()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        manifest = json.loads((self.home / 'config/multica/team.json').read_text())
+        expected = {label['name'] for label in manifest['labels']}
+        actual = {label['name'] for label in self.fixture.resources['labels'].values()}
+        self.assertEqual(actual, expected)
+        existing = self.fixture.resources['labels']['existing']
+        self.assertEqual(existing['color'], '#000000')
+        self.assertEqual(existing['description'], 'Workspace customization')
+        writes = [request for request in self.writes() if request[1] == '/api/labels']
+        self.assertEqual(len(writes), len(expected) - 1)
+        self.fixture.requests.clear()
+        second = self.run_seed()
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual(self.writes(), [])
 
     def test_duplicate_manifest_agent_is_rejected_before_any_write(self):
         path = self.home / 'config/multica/team.json'
@@ -464,7 +485,8 @@ class TeamContractTests(unittest.TestCase):
         self.assertIn('disabled', result.stderr)
 
     def test_squad_create_with_failed_readback_never_claims_empty_policy_verified(self):
-        self.fixture.fail_once.add(('GET', f'/api/squads/squads-{len(self.manifest_agents()) + 1}'))
+        label_count = len(json.loads((self.home / 'config/multica/team.json').read_text())['labels'])
+        self.fixture.fail_once.add(('GET', f'/api/squads/squads-{label_count + len(self.manifest_agents()) + 1}'))
         first = self.run_seed()
         self.assertNotEqual(first.returncode, 0)
         retry = self.run_seed()
