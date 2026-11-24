@@ -379,6 +379,9 @@ class TeamContractTests(unittest.TestCase):
         squad = next(iter(self.fixture.resources['squads'].values()))
         self.assertTrue(squad.get('instructions'))
 
+    def manifest_agents(self):
+        return json.loads((self.home / 'config/multica/team.json').read_text())['agents']
+
     def test_skill_creation_failure_can_resume(self):
         self.fixture.fail.add(('POST', '/api/skills'))
         first = self.run_seed()
@@ -386,7 +389,7 @@ class TeamContractTests(unittest.TestCase):
         self.fixture.fail.clear()
         second = self.run_seed()
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
-        self.assertEqual(len(self.fixture.resources['agents']), 7)
+        self.assertEqual(len(self.fixture.resources['agents']), len(self.manifest_agents()))
         self.assertEqual(len(self.fixture.resources['skills']), 2)
 
     def test_attachment_failure_exits_nonzero(self):
@@ -461,7 +464,7 @@ class TeamContractTests(unittest.TestCase):
         self.assertIn('disabled', result.stderr)
 
     def test_squad_create_with_failed_readback_never_claims_empty_policy_verified(self):
-        self.fixture.fail_once.add(('GET', '/api/squads/squads-8'))
+        self.fixture.fail_once.add(('GET', f'/api/squads/squads-{len(self.manifest_agents()) + 1}'))
         first = self.run_seed()
         self.assertNotEqual(first.returncode, 0)
         retry = self.run_seed()
