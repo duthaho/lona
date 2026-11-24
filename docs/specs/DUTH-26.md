@@ -64,7 +64,7 @@ A skip label counts only when such a comment exists and its author is duthaho or
 **`skip-security` eligibility: allowlist, fail-closed.** `skip-security` is valid only when **every** file in `gh pr diff --name-only` matches the allowlist below:
 
 - `docs/**/*.md` and `README.md`
-- other `*.md` files, **except** `SKILL.md`, `SOUL.md`, and anything under a dot-directory (`.*/**`, e.g. `.github/`, `.hermes/`, `.claude/`) or `config/**`
+- other `*.md` files, **except** `SKILL.md`, `SOUL.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` (at any depth), and anything under a dot-directory (`.*/**`, e.g. `.github/`, `.hermes/`, `.claude/`) or `config/**`
 
 If any file falls outside the allowlist, or the reviewer is not sure, the label is removed. Comment-only edits in code files (`.py`, `.ts`, …) are code changes and are not eligible. `tests/**` is not eligible either: tests run in CI with the workflow token, so they are a supply-chain path.
 
@@ -72,7 +72,7 @@ The following are never eligible, whatever the file type. They are listed to exp
 
 - **Agent control and policy surfaces:**
   - `config/multica/**`, `config/hermes/**`, `config/openclaw/**` and `.claude/**`
-  - any `SKILL.md` or `SOUL.md`
+  - any `SKILL.md`, `SOUL.md`, `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` or `.cursorrules`
   - agent instructions and workflow step text
   - any file that defines agent permissions, tools or model routing
 
@@ -225,6 +225,7 @@ Hoàng-Security's review (round 1: REQUEST CHANGES, comment on DUTH-26) is appli
 - **M2, overlap with DUTH-27:** no auto-merge for `skip-security` issues (Constraints), and a skipped-step note is required at `in_review` (AC11).
 - **Recommendation, not blocking:** a weekly post-hoc audit of merged `skip-security` PRs. Carried to DUTH-27.
 - **Round 2 (REQUEST CHANGES):** B1 restored the deleted Rollout, Rollback, Design, Test plan and Threat model sections. B2 set the sub-issue ACs to AC1–AC11. M3 excluded `.md` files under dot-directories. M4 removed `tests/**` from the `skip-security` allowlist. The two nits are applied in the rules and Risks.
+- **Round 3: APPROVE** (commit `cf39898`), with no Critical or High findings left. M5 is applied: `CLAUDE.md`, `AGENTS.md`, `GEMINI.md` and `.cursorrules` are excluded like `SKILL.md`/`SOUL.md`, and Trung-PM's instructions must carry the same exclusions. The implementation PR goes through the full `code_review → security_review → qa` path, and Hoàng-Security checks the live instructions against `team.json` (AC8).
 
 Trade-off: `skip-security` now only saves runs on docs-only changes. Workflow and skill text changes still skip QA but not security.
 
