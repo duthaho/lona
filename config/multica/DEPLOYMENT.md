@@ -24,6 +24,32 @@ Multica `doctor`, `cli`, and `sync` are unsupported and fail explicitly. Inspect
 
 Local model validation does not start containers. A Docker daemon is needed to verify actual service readiness, migrations, persistent volume upgrades, and recovery.
 
+## Host daemon tuning (GC, autostart)
+
+The agent runtime daemon is a **host process**, not a Compose service; `up` never
+installs, starts, or configures it. Its tuning (garbage collection of
+`multica_workspaces`, autostart) therefore does not travel with `.env` or the
+Docker stack. `./deploy.sh multica daemon-setup` makes it reproducible: it runs
+`multica daemon autostart enable` and installs the committed drop-in
+`config/multica/multica-daemon.service.d/tuning.conf` to
+`~/.config/systemd/user/multica-daemon.service.d/tuning.conf`, then reloads the
+user manager.
+
+Run it on a fresh host **after** `install-agents` and the interactive
+`multica setup self-host …` (the daemon and its systemd unit must exist first).
+It requires a reachable `systemd --user` instance — enable lingering with
+`sudo loginctl enable-linger $USER` if the user bus is absent. It is idempotent
+and **does not restart a running daemon**: GC/tuning changes apply on the next
+daemon start or reboot; apply immediately with
+`systemctl --user restart multica-daemon.service` (interrupts in-flight runs,
+which are then re-polled).
+
+`MULTICA_GC_INTERVAL` is the sweep cadence (default 2h) and governs how fast disk
+is reclaimed; the `*_TTL` vars only bound age. Non-GC daemon knobs
+(`MULTICA_DAEMON_MAX_CONCURRENT_TASKS`, watchdogs, …) are shipped commented in the
+drop-in because `max_concurrent_tasks` is sized to host CPU/RAM; review per host
+before enabling.
+
 ## Portable team workflow
 
 `team-setup` accepts schema v2: it creates statuses, agents/squad/skills, the
