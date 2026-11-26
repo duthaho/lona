@@ -643,7 +643,7 @@ def main():
             import getpass
             token = getpass.getpass('Multica API token (Settings → Personal → API Tokens): ')
         if not token:
-            raise SetupError('MULTICA_API_TOKEN is required; no token is read from command arguments')
+            raise SetupError('MULTICA_API_TOKEN (or MULTICA_TOKEN inside an agent run) is required')
         client = Client('http://127.0.0.1:' + port, token, args.timeout)
         client.request('GET', '/api/config')
         team = validate_team(json.loads(args.team.read_text()))
