@@ -5,7 +5,7 @@
 #   ./deploy.sh hermes              # deploy Hermes Agent
 #   ./deploy.sh multica             # deploy Multica AI Agent Platform
 #   ./deploy.sh <platform> <action> # up|down|restart|logs|status|update|config|sync|backup|doctor|cli|skills
-#                                   # multica also: install-agents|team-setup
+#                                   # multica also: install-agents|team-setup|daemon-setup
 #
 # Examples:
 #   ./deploy.sh openclaw logs
@@ -396,6 +396,9 @@ next_steps() {
       echo "  Install coding agent CLIs on this machine:"
       echo "    ./deploy.sh multica install-agents"
       echo
+      echo "  Register the host daemon autostart + tuning (run after 'multica setup self-host'):"
+      echo "    ./deploy.sh multica daemon-setup"
+      echo
       echo "  Seed the enterprise agent team (run after creating your account + workspace):"
       echo "    ./deploy.sh multica team-setup"
       ;;
@@ -648,6 +651,10 @@ PY
   team-setup)
     [ "$PLATFORM" = multica ] || die "'team-setup' is only supported for the multica platform"
     exec config/multica/seed-team.sh "$@"
+    ;;
+  daemon-setup)
+    [ "$PLATFORM" = multica ] || die "'daemon-setup' is only supported for the multica platform"
+    exec scripts/setup-daemon.sh "$@"
     ;;
   *) usage ;;
 esac
